@@ -1,0 +1,26 @@
+{
+  "name": "cloud-bdr-sales-engagement",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node --no-warnings server/index.js",
+    "dev:client": "vite --host 0.0.0.0",
+    "seed": "node --no-warnings server/scripts/reset-db.js",
+    "test": "node --no-warnings server/scripts/system-check.js",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "read-excel-file": "^9.0.10",
+    "vite": "^7.3.0"
+  }
+}

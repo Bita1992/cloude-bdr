@@ -1,0 +1,2105 @@
+import { useEffect, useMemo, useState } from 'react';
+import { DailyBriefing } from './DailyBriefing.jsx';
+import { MetricGridNew } from './MetricGridNew.jsx';
+import { NextTaskHero } from './NextTaskHero.jsx';
+import { CelebrationOverlay } from './CelebrationOverlay.jsx';
+import './briefing.css';
+import {
+  BarChart3,
+  CalendarClock,
+  Check,
+  ChevronRight,
+  Clock3,
+  Copy,
+  ExternalLink,
+  GitBranch,
+  LogOut,
+  Mail,
+  MessageCircle,
+  Moon,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Phone,
+  RefreshCcw,
+  Save,
+  Search,
+  Settings,
+  ShieldCheck,
+  Sun,
+  Target,
+  UserRoundCheck,
+  X
+} from 'lucide-react';
+
+const NAV = [
+  { id: 'execution', label: 'Execução BDR', icon: Target },
+  { id: 'funnels', label: 'Funis', icon: GitBranch },
+  { id: 'enrichment', label: 'Enriquecimento', icon: ShieldCheck },
+  { id: 'agenda', label: 'Agenda', icon: CalendarClock },
+  { id: 'cadences', label: 'Cadências', icon: RefreshCcw },
+  { id: 'leads', label: 'Lead 360', icon: Search },
+  { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+  { id: 'crm', label: 'CRM Closer', icon: UserRoundCheck },
+  { id: 'settings', label: 'Config. 3C+', icon: Settings }
+];
+
+const TYPE_LABEL = {
+  ENRICHMENT: 'Enriquecimento',
+  CALL: 'Ligação',
+  WHATSAPP: 'WhatsApp',
+  EMAIL: 'E-mail',
+  LINKEDIN: 'LinkedIn',
+  FOLLOW_UP: 'Follow-up',
+  MEETING_CONFIRMATION: 'Confirmação',
+  CLOSER_FOLLOW_UP: 'Closer'
+};
+
+const STAGE_LABEL = {
+  MEETING_SCHEDULED: 'Reunião agendada',
+  MEETING_DONE: 'Reunião ocorrida',
+  DIAGNOSIS_DONE: 'Diagnóstico',
+  PROPOSAL_SENT: 'Proposta enviada',
+  PROPOSAL_FOLLOW_UP: 'Follow-up proposta',
+  NEGOTIATION: 'Negociação',
+  CLOSED_WON: 'Ganho',
+  CLOSED_LOST: 'Perdido'
+};
+
+const THREEC_CLASSIFICATION_LABEL = {
+  connected: 'Conectou',
+  meeting: 'Agendou',
+  follow: 'Follow',
+  no_answer: 'Não atendeu',
+  voicemail: 'Caixa postal',
+  phone_invalid: 'Telefone inválido',
+  phone_no_link: 'Sem vínculo',
+  not_interested: 'Sem interesse',
+  out_of_icp: 'Fora do ICP',
+  gatekeeper: 'Gatekeeper',
+  email: 'E-mail',
+  whatsapp: 'WhatsApp',
+  unknown: 'Desconhecido'
+};
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(data?.error || `Erro ${response.status}`);
+    error.status = response.status;
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cloud-bdr-auth-expired'));
+    }
+    throw error;
+  }
+  return data;
+}
+
+function taskIdFromQuery() {
+  if (typeof window === 'undefined') return null;
+  const value = new URLSearchParams(window.location.search).get('task');
+  if (!value || !/^\d+$/.test(value)) return null;
+  return Number(value);
+}
+
+function taskExecutionUrl(taskId) {
+  if (!taskId) return '/';
+  if (typeof window === 'undefined') return `/?task=${taskId}&mode=execute`;
+  const url = new URL(window.location.href);
+  url.searchParams.set('task', taskId);
+  url.searchParams.set('mode', 'execute');
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function clearTaskQuery() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('task');
+  url.searchParams.delete('mode');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function formatDate(value) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value));
+}
+
+function toLocalInput(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromLocalInput(value) {
+  return value ? new Date(value).toISOString() : '';
+}
+
+function digits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function primaryName(lead) {
+  return lead?.contacts?.[0]?.name || '[Nome]';
+}
+
+function companyNameFromTask(task) {
+  return task?.trade_name || task?.legal_name || 'Lead';
+}
+
+function companyNameFromLead(lead) {
+  return lead?.trade_name || lead?.legal_name || 'Lead';
+}
+
+function replaceTemplate(template, task, lead) {
+  return String(template || '')
+    .replaceAll('[Nome]', primaryName(lead))
+    .replaceAll('[Empresa]', companyNameFromTask(task) || companyNameFromLead(lead));
+}
+
+function useDarkMode() {
+  const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark');
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }, [dark]);
+  return [dark, () => setDark((d) => !d)];
+}
+
+function App() {
+  const [dark, toggleDark] = useDarkMode();
+  const [auth, setAuth] = useState({ checking: true, authenticated: false, user: null });
+  const [view, setView] = useState('execution');
+  const [boot, setBoot] = useState(null);
+  const [dashboard, setDashboard] = useState(null);
+  const [funnelDashboard, setFunnelDashboard] = useState(null);
+  const [closerDashboard, setCloserDashboard] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [selectedTaskData, setSelectedTaskData] = useState(null);
+  const [toast, setToast] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [celebrating, setCelebrating] = useState(false);
+
+  async function loadShell({ respectUrlTask = true } = {}) {
+    const [bootstrap, bdr, funnels, closer, today] = await Promise.all([
+      api('/api/bootstrap'),
+      api('/api/dashboard/bdr'),
+      api('/api/dashboard/funnels'),
+      api('/api/dashboard/closer'),
+      api('/api/tasks/today')
+    ]);
+    setBoot(bootstrap);
+    setDashboard(bdr);
+    setFunnelDashboard(funnels);
+    setCloserDashboard(closer);
+    setTasks(today);
+    const urlTaskId = respectUrlTask ? taskIdFromQuery() : null;
+    const nextTaskId = urlTaskId || selectedTaskId || today[0]?.id || null;
+    if (nextTaskId) setSelectedTaskId(Number(nextTaskId));
+    else setSelectedTaskId(null);
+    return { bootstrap, bdr, funnels, closer, today };
+  }
+
+  function clearAppState() {
+    setBoot(null);
+    setDashboard(null);
+    setFunnelDashboard(null);
+    setCloserDashboard(null);
+    setTasks([]);
+    setSelectedTaskId(null);
+    setSelectedTaskData(null);
+  }
+
+  async function handleLogin(credentials) {
+    const result = await api('/api/auth/login', { method: 'POST', body: credentials });
+    setAuth({ checking: false, authenticated: true, user: result.user });
+    await loadShell();
+    setToast('Login realizado.');
+  }
+
+  async function handleLogout() {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
+    clearAppState();
+    setAuth({ checking: false, authenticated: false, user: null });
+    setToast('');
+  }
+
+  function selectTask(taskId, { replace = false } = {}) {
+    if (!taskId) return;
+    const numericTaskId = Number(taskId);
+    setSelectedTaskId(numericTaskId);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('task', numericTaskId);
+      url.searchParams.set('mode', 'execute');
+      window.history[replace ? 'replaceState' : 'pushState']({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
+  async function openTask(taskId) {
+    if (!taskId) return;
+    const numericTaskId = Number(taskId);
+    setSelectedTaskId(numericTaskId);
+    const data = await api(`/api/tasks/${numericTaskId}`);
+    setSelectedTaskData(data);
+  }
+
+  async function reloadSelectedTask() {
+    if (!selectedTaskId) return;
+    await openTask(selectedTaskId);
+  }
+
+  useEffect(() => {
+    let active = true;
+    const handleExpired = () => {
+      clearAppState();
+      setAuth({ checking: false, authenticated: false, user: null });
+      setToast('Sessão expirada. Faça login novamente.');
+    };
+    window.addEventListener('cloud-bdr-auth-expired', handleExpired);
+    api('/api/auth/session')
+      .then(async (session) => {
+        if (!active) return;
+        const authenticated = session.authenticated || session.authEnabled === false;
+        setAuth({ checking: false, authenticated, user: session.user });
+        if (authenticated) await loadShell();
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAuth({ checking: false, authenticated: false, user: null });
+        setToast(error.message);
+      });
+    return () => {
+      active = false;
+      window.removeEventListener('cloud-bdr-auth-expired', handleExpired);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const taskId = taskIdFromQuery();
+      if (taskId) {
+        setView('execution');
+        setSelectedTaskId(taskId);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (selectedTaskId) openTask(selectedTaskId).catch((error) => setToast(error.message));
+  }, [selectedTaskId]);
+
+  async function refreshAfterAction(message) {
+    const completedTaskId = selectedTaskId;
+    const { today } = await loadShell({ respectUrlTask: false });
+    const nextTask = today.find((task) => task.id !== completedTaskId) || today[0];
+    if (nextTask) selectTask(nextTask.id, { replace: true });
+    else {
+      setSelectedTaskId(null);
+      setSelectedTaskData(null);
+      clearTaskQuery();
+    }
+    setToast(message);
+  }
+
+  if (auth.checking) return <AuthLoading />;
+
+  if (!auth.authenticated) {
+    return <LoginView onLogin={handleLogin} toast={toast} setToast={setToast} />;
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">C</div>
+          <div>
+            <strong>Cloud BDR</strong>
+            <span>Sales engagement</span>
+          </div>
+        </div>
+        <nav className="nav">
+          {NAV.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="side-status">
+          <span>Leads</span>
+          <strong>{boot?.counts?.leads ?? '-'}</strong>
+          <small>3C+ {boot?.threeC?.hasOperatorToken ? 'operador configurado' : 'sem token local'}</small>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">Fila operacional</span>
+            <h1>{NAV.find((item) => item.id === view)?.label}</h1>
+          </div>
+          <div className="topbar-actions">
+            <span className="session-user">{auth.user?.username || 'BDR'}</span>
+            <button className="icon-button" onClick={toggleDark} title={dark ? 'Modo claro' : 'Modo escuro'}>
+              {dark ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+            <button className="icon-button" onClick={() => loadShell().catch((error) => setToast(error.message))} title="Atualizar">
+              <RefreshCcw size={18} />
+            </button>
+            <button className="icon-button" onClick={handleLogout} title="Sair">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
+
+        {toast && (
+          <div className="toast">
+            <span>{toast}</span>
+            <button onClick={() => setToast('')} title="Fechar"><X size={16} /></button>
+          </div>
+        )}
+
+        {celebrating && (
+          <CelebrationOverlay
+            meetingsTotal={dashboard?.meetings ?? 0}
+            onDone={() => setCelebrating(false)}
+          />
+        )}
+
+        {view === 'execution' && (
+          <ExecutionView
+            dashboard={dashboard}
+            tasks={tasks}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={selectTask}
+            selectedTaskData={selectedTaskData}
+            loading={loading}
+            setLoading={setLoading}
+            onDone={refreshAfterAction}
+            onCelebrate={() => setCelebrating(true)}
+            onReloadTask={reloadSelectedTask}
+            setToast={setToast}
+          />
+        )}
+        {view === 'enrichment' && <QueueView type="ENRICHMENT" onSelectTask={selectTask} setView={setView} setToast={setToast} />}
+        {view === 'funnels' && <FunnelsView data={funnelDashboard} onSelectTask={selectTask} setView={setView} />}
+        {view === 'agenda' && <AgendaView onSelectTask={selectTask} setView={setView} setToast={setToast} />}
+        {view === 'cadences' && <CadenceView setToast={setToast} />}
+        {view === 'leads' && <LeadSearchView setToast={setToast} />}
+        {view === 'dashboard' && <DashboardView dashboard={dashboard} closerDashboard={closerDashboard} />}
+        {view === 'crm' && <CrmView setToast={setToast} />}
+        {view === 'settings' && <SettingsView config={boot?.threeC} />}
+      </main>
+    </div>
+  );
+}
+
+function AuthLoading() {
+  return (
+    <main className="auth-shell">
+      <section className="login-panel">
+        <div className="brand auth-brand">
+          <div className="brand-mark">C</div>
+          <div>
+            <strong>Cloud BDR</strong>
+            <span>Sales engagement</span>
+          </div>
+        </div>
+        <div className="auth-state">Carregando sessão...</div>
+      </section>
+    </main>
+  );
+}
+
+function LoginView({ onLogin, toast, setToast }) {
+  const [username, setUsername] = useState('bdr');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setPending(true);
+    setToast('');
+    try {
+      await onLogin({ username, password });
+    } catch (error) {
+      setToast(error.message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="login-panel">
+        <div className="brand auth-brand">
+          <div className="brand-mark">C</div>
+          <div>
+            <strong>Cloud BDR</strong>
+            <span>Sales engagement</span>
+          </div>
+        </div>
+        <div className="login-title">
+          <ShieldCheck size={22} />
+          <div>
+            <span className="eyebrow">Acesso interno</span>
+            <h1>Login BDR</h1>
+          </div>
+        </div>
+        <form className="login-form" onSubmit={submit}>
+          <label className="field">
+            <span>Usuário</span>
+            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus />
+          </label>
+          <label className="field">
+            <span>Senha</span>
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" />
+          </label>
+          {toast && <div className="auth-error">{toast}</div>}
+          <button className="primary" type="submit" disabled={pending}>
+            <Check size={17} />
+            {pending ? 'Entrando...' : 'Entrar'}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selectedTaskData, loading, setLoading, onDone, onCelebrate, onReloadTask, setToast }) {
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
+  const grouped = useMemo(() => {
+    const buckets = {
+      ENRICHMENT: [],
+      CALL: [],
+      MESSAGE: [],
+      FOLLOW: [],
+      CLOSER: []
+    };
+    tasks.forEach((task) => {
+      if (task.type === 'ENRICHMENT') buckets.ENRICHMENT.push(task);
+      else if (task.type === 'CALL') buckets.CALL.push(task);
+      else if (['WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(task.type)) buckets.MESSAGE.push(task);
+      else if (['FOLLOW_UP', 'MEETING_CONFIRMATION'].includes(task.type)) buckets.FOLLOW.push(task);
+      else buckets.CLOSER.push(task);
+    });
+    return buckets;
+  }, [tasks]);
+
+  const queueSummary = [
+    ['ENRICHMENT', 'Enriq.', grouped.ENRICHMENT.length],
+    ['CALL', 'Ligar', grouped.CALL.length],
+    ['MESSAGE', 'Msgs', grouped.MESSAGE.length],
+    ['FOLLOW', 'Follow', grouped.FOLLOW.length],
+    ['CLOSER', 'Closer', grouped.CLOSER.length]
+  ];
+
+  return (
+    <>
+      <DailyBriefing dashboard={dashboard} userName="Luciano" />
+      <MetricGridNew dashboard={dashboard} />
+      <NextTaskHero task={tasks[0]} onExecute={() => onSelectTask(tasks[0]?.id)} />
+      <div className={`workgrid execution-cockpit ${queueCollapsed ? 'queue-collapsed' : ''}`}>
+        <section className={`queue-panel ${queueCollapsed ? 'collapsed' : ''}`}>
+          <div className="section-head queue-head">
+            <div>
+              <span className="eyebrow">Hoje</span>
+              <h2>{queueCollapsed ? 'Fila' : 'Tarefas por bloco'}</h2>
+            </div>
+            <div className="queue-head-actions">
+              <span className="pill">{tasks.length}</span>
+              <button className="icon-button queue-toggle" type="button" onClick={() => setQueueCollapsed((current) => !current)} title={queueCollapsed ? 'Expandir fila' : 'Recolher fila'}>
+                {queueCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+              </button>
+            </div>
+          </div>
+          {queueCollapsed ? (
+            <div className="queue-mini">
+              {queueSummary.map(([key, label, count]) => (
+                <button key={key} type="button" onClick={() => setQueueCollapsed(false)}>
+                  <strong>{count}</strong>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <TaskGroup title="Enriquecer" tasks={grouped.ENRICHMENT} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Ligar" tasks={grouped.CALL} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Mensagens" tasks={grouped.MESSAGE} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Follow-ups e reuniões" tasks={grouped.FOLLOW} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Closer" tasks={grouped.CLOSER} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+            </>
+          )}
+        </section>
+        <TaskWorkbench
+          data={selectedTaskData}
+          loading={loading}
+          setLoading={setLoading}
+          onDone={onDone}
+          onCelebrate={onCelebrate}
+          onReloadTask={onReloadTask}
+          setToast={setToast}
+        />
+      </div>
+    </>
+  );
+}
+
+function MetricGrid({ dashboard }) {
+  const metrics = [
+    ['Leads', dashboard?.leads],
+    ['Abertas', dashboard?.openTasks],
+    ['Hoje', dashboard?.dueToday],
+    ['Atrasadas', dashboard?.overdue],
+    ['Ligações feitas', dashboard?.callsDoneToday],
+    ['Significativas', dashboard?.significantCallsToday],
+    ['Não significativas', dashboard?.nonSignificantCallsToday],
+    ['Reuniões', dashboard?.meetings]
+  ];
+  return (
+    <div className="metrics">
+      {metrics.map(([label, value]) => (
+        <div className="metric" key={label}>
+          <span>{label}</span>
+          <strong>{value ?? '-'}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TaskGroup({ title, tasks, selectedTaskId, onSelectTask }) {
+  return (
+    <div className="task-group">
+      <div className="task-group-title">
+        <span>{title}</span>
+        <small>{tasks.length}</small>
+      </div>
+      {tasks.slice(0, 10).map((task) => (
+        <button
+          key={task.id}
+          className={`task-row ${selectedTaskId === task.id ? 'selected' : ''}`}
+          onClick={() => onSelectTask(task.id)}
+        >
+          <div>
+            <strong>{companyNameFromTask(task)}</strong>
+            <span>
+              <span className={`task-badge task-badge-${task.type}`}>{TYPE_LABEL[task.type]}</span>
+              {' '}{task.title}
+            </span>
+          </div>
+          <time>{formatDate(task.due_at)}</time>
+        </button>
+      ))}
+      {!tasks.length && <p className="empty-line">Sem tarefas nesse bloco.</p>}
+    </div>
+  );
+}
+
+function TaskWorkbench({ data, loading, setLoading, onDone, onCelebrate, onReloadTask, setToast }) {
+  const task = data?.task;
+  const lead = data?.lead;
+  const [fields, setFields] = useState({});
+  const [callId, setCallId] = useState('');
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  useEffect(() => {
+    if (!task) return;
+    const base = {
+      phone: task.primary_phone || lead?.phones?.[0]?.phone || '',
+      recipient_email: '',
+      subject: '',
+      conversation_note: '',
+      reason: '',
+      followup_at: '',
+      meeting_at: '',
+      value: '',
+      expected_close_at: ''
+    };
+    setFields({ ...base, ...(lead?.enrichment || {}), ...(task.fields || {}) });
+    setCallId('');
+  }, [task?.id]);
+
+  if (!task) {
+    return (
+      <section className="workbench empty-state">
+        <Clock3 size={28} />
+        <h2>Nenhuma tarefa selecionada</h2>
+        <p>Selecione uma tarefa da fila para executar.</p>
+      </section>
+    );
+  }
+
+  function update(key, value) {
+    setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  function selectPhone(phone) {
+    update('phone', phone);
+    setToast(`Telefone ${phone} selecionado para a ligação.`);
+  }
+
+  async function saveDraft() {
+    if (!task) return;
+    setSavingDraft(true);
+    try {
+      const response = await api(`/api/tasks/${task.id}/fields`, {
+        method: 'PATCH',
+        body: { fields: { ...fields, ...(callId ? { call_id: callId } : {}) } }
+      });
+      setFields((current) => ({ ...current, ...(response.task?.fields || {}) }));
+      if (onReloadTask) await onReloadTask();
+      setToast('Rascunho salvo nesta tarefa.');
+    } catch (error) {
+      setToast(error.message);
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function complete(outcome) {
+    setLoading(true);
+    try {
+      await api(`/api/tasks/${task.id}/complete`, {
+        method: 'POST',
+        body: { outcome, fields: { ...fields, ...(callId ? { call_id: callId } : {}) } }
+      });
+      if (outcome === 'meeting_scheduled' || outcome === 'meeting_happened') {
+        onCelebrate?.();
+      }
+      await onDone('Tarefa concluída e próxima ação criada.');
+    } catch (error) {
+      setToast(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startCall() {
+    const phone = fields.phone || task.primary_phone;
+    if (!phone) {
+      setToast('Escolha um telefone para ligar.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await api('/api/3c/manual-call/start', {
+        method: 'POST',
+        body: { taskId: task.id, leadId: task.lead_id, phone }
+      });
+      setCallId(response.callId || '');
+      setToast('Ligação enviada para a 3C+.');
+    } catch (error) {
+      setToast(`${error.message}. Use o telefone local como fallback.`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const template = replaceTemplate(task.payload?.messageTemplate, task, lead);
+  const subject = replaceTemplate(task.payload?.subjectTemplate, task, lead);
+  const primaryPhone = fields.phone || task.primary_phone;
+
+  return (
+    <section className="workbench cockpit-workbench">
+      <div className="lead-header">
+        <div>
+          <span className="eyebrow">{TYPE_LABEL[task.type]}</span>
+          <h2>{companyNameFromTask(task)}</h2>
+          <p>{lead?.cnpj} · {lead?.city || 'Cidade não informada'}</p>
+        </div>
+        <div className="lead-state">
+          <span>{lead?.state}</span>
+          <strong>{task.title}</strong>
+          <a className="task-open-link" href={taskExecutionUrl(task.id)} target="_blank" rel="noreferrer">
+            <ExternalLink size={13} /> Nova aba
+          </a>
+        </div>
+      </div>
+
+      <div className="context-strip">
+        <span>Prazo: {formatDate(task.due_at)}</span>
+        {task.attempt_number && <span>Tentativa do sistema: {task.attempt_number}</span>}
+        {lead?.cnpj && <span className="copy-chip">CNPJ: {lead.cnpj}<CopyButton value={lead.cnpj} label="Copiar CNPJ" setToast={setToast} /></span>}
+        {primaryPhone && <span className="copy-chip">Telefone: {primaryPhone}<CopyButton value={primaryPhone} label="Copiar telefone" setToast={setToast} /></span>}
+      </div>
+
+      {task.type === 'CALL' && <CallPrepPanel lead={lead} primaryPhone={primaryPhone} setToast={setToast} />}
+
+      <div className="task-script">
+        <strong>Roteiro da tarefa</strong>
+        <p>{scriptFor(task.type, task)}</p>
+      </div>
+
+      <TaskFields
+        task={task}
+        lead={lead}
+        fields={fields}
+        update={update}
+        template={template}
+        subject={subject}
+        startCall={startCall}
+        callId={callId}
+        loading={loading}
+      />
+
+      <LeadDataPanel lead={lead} selectedPhone={primaryPhone} onSelectPhone={selectPhone} setToast={setToast} />
+
+      <OutcomeBar task={task} complete={complete} loading={loading} onSaveDraft={saveDraft} savingDraft={savingDraft} />
+    </section>
+  );
+}
+
+function scriptFor(type, task) {
+  if (type === 'ENRICHMENT') return 'Validar fit, telefone, decisor, canal social, contexto e hipótese de dor antes de liberar a cadência fria.';
+  if (type === 'CALL') return 'Abrir curto, confirmar decisor, contextualizar o motivo comercial e tabular o resultado real da chamada.';
+  if (type === 'WHATSAPP') return 'Enviar a mensagem pronta, registrar envio e interromper a cadência se houver resposta com interesse ou objeção clara.';
+  if (type === 'EMAIL' && task.payload?.funnel === 'EMAIL_FUNNEL') return 'Executar o funil de e-mail gerado pela ligação: assunto, contexto da tentativa, envio e próxima etapa automática.';
+  if (type === 'EMAIL') return 'Enviar e-mail curto com contexto, sem transformar a tarefa em redação manual.';
+  if (type === 'LINKEDIN') return 'Checar decisor e sinal público relevante. Se fizer conexão ou abordagem, registrar como feito.';
+  if (type === 'FOLLOW_UP') return 'Cumprir o combinado de retorno. Se houver nova data prometida, registrar data e hora.';
+  if (type === 'MEETING_CONFIRMATION') return 'Confirmar presença, participantes, dor e briefing mínimo para o closer conduzir.';
+  if (type === 'CLOSER_FOLLOW_UP') return 'Executar próximo passo comercial depois da reunião: proposta, objeção, valor e previsão.';
+  return task.title;
+}
+
+function CopyButton({ value, label, setToast }) {
+  async function copy(event) {
+    event.stopPropagation();
+    const text = String(value || '');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast(`${label || 'Valor'} copiado.`);
+    } catch {
+      setToast('Não consegui copiar automaticamente.');
+    }
+  }
+  return (
+    <button className="copy-button" type="button" onClick={copy} title={label || 'Copiar'}>
+      <Copy size={13} />
+    </button>
+  );
+}
+
+function phoneStatusText(phone) {
+  const status = {
+    UNVALIDATED: 'não validado',
+    ENRICHED_UNVALIDATED: 'enriquecido',
+    VALID_DECISION_MAKER: 'decisor',
+    CONTACTED: 'contatado',
+    INVALID: 'inválido',
+    NO_LINK: 'sem vínculo',
+    GATEKEEPER: 'gatekeeper'
+  };
+  const relation = {
+    UNKNOWN: 'sem vínculo confirmado',
+    DECISION_MAKER: 'telefone do decisor',
+    COMPANY: 'empresa',
+    GATEKEEPER: 'gatekeeper',
+    NO_LINK: 'sem vínculo',
+    INVALID: 'inválido'
+  };
+  return [status[phone.status] || phone.status || 'não validado', relation[phone.relationship] || phone.relationship].filter(Boolean).join(' · ');
+}
+
+const ENRICHMENT_VIEW_FIELDS = [
+  ['decision_maker', 'Decisor'],
+  ['decision_role', 'Cargo'],
+  ['site', 'Site'],
+  ['instagram', 'Instagram'],
+  ['linkedin_company', 'LinkedIn'],
+  ['recipient_email', 'E-mail'],
+  ['phone_found', 'Telefone encontrado'],
+  ['alternate_phone', 'Telefone alternativo'],
+  ['phone_source', 'Fonte do telefone'],
+  ['rapport', 'Rapport / gancho'],
+  ['pain_hypothesis', 'Hipótese de dor'],
+  ['notes', 'Observação da pesquisa']
+];
+
+function presentValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+function buildEnrichmentEntries(enrichment = {}) {
+  const entries = ENRICHMENT_VIEW_FIELDS
+    .map(([key, label]) => ({ key, label, value: enrichment[key] }))
+    .filter((item) => presentValue(item.value));
+  const knownValues = new Set(entries.map((item) => String(item.value).trim()));
+  const derivedLinks = [enrichment.notes, enrichment.rapport, enrichment.pain_hypothesis]
+    .flatMap(extractUrls)
+    .filter((url, index, list) => list.indexOf(url) === index && !knownValues.has(url));
+  return [
+    ...entries,
+    ...derivedLinks.map((url) => ({
+      key: labelKeyForUrl(url),
+      label: labelForUrl(url),
+      value: url
+    }))
+  ];
+}
+
+function extractUrls(value) {
+  return String(value || '').match(/https?:\/\/[^\s)]+/g) || [];
+}
+
+function labelKeyForUrl(url) {
+  if (/instagram\.com/i.test(url)) return 'instagram';
+  if (/linkedin\.com/i.test(url)) return 'linkedin_company';
+  return 'site';
+}
+
+function labelForUrl(url) {
+  if (/instagram\.com/i.test(url)) return 'Instagram encontrado';
+  if (/linkedin\.com/i.test(url)) return 'LinkedIn encontrado';
+  return 'Site encontrado';
+}
+
+function externalHref(key, value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  let href = extractUrls(text)[0] || text;
+  if (key === 'instagram' && text.startsWith('@')) href = `https://instagram.com/${text.slice(1)}`;
+  if (key === 'instagram' && !text.includes('/') && !text.includes(' ') && !text.includes('@')) href = `https://instagram.com/${text}`;
+  if (key === 'linkedin_company' && !text.startsWith('http') && text.includes('linkedin.com')) href = `https://${text}`;
+  if ((key === 'site' || key === 'linkedin_company' || key === 'instagram') && href.startsWith('www.')) href = `https://${href}`;
+  if ((key === 'site' || key === 'linkedin_company' || key === 'instagram') && href.startsWith('http')) {
+    try {
+      return new URL(href).toString();
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function ResearchItem({ item, setToast, compact = false }) {
+  const href = externalHref(item.key, item.value);
+  return (
+    <div className={`research-item ${compact ? 'compact' : ''} ${String(item.value).length > 90 ? 'large' : ''}`}>
+      <span>{item.label}</span>
+      <strong>{String(item.value)}</strong>
+      <div className="research-actions">
+        <CopyButton value={item.value} label={item.label} setToast={setToast} />
+        {href && (
+          <a href={href} target="_blank" rel="noreferrer" title={`Abrir ${item.label}`}>
+            <ExternalLink size={13} />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CallPrepPanel({ lead, primaryPhone, setToast }) {
+  const enrichment = lead?.enrichment || {};
+  const links = buildEnrichmentEntries(enrichment).filter((item) => externalHref(item.key, item.value));
+  const latestContext = lead?.recentContext?.[0]?.note || '';
+  return (
+    <div className="call-prep-panel">
+      <div className="prep-card">
+        <span>Decisor</span>
+        <strong>{enrichment.decision_maker || primaryName(lead)}</strong>
+        <small>{enrichment.decision_role || 'Cargo não validado'}{primaryPhone ? ` · ${primaryPhone}` : ''}</small>
+      </div>
+      <div className="prep-card emphasis">
+        <span>Gancho de abertura</span>
+        <strong>{enrichment.rapport || 'Sem gancho salvo. Use o segmento e a cidade como abertura.'}</strong>
+      </div>
+      <div className="prep-card">
+        <span>Dor provável</span>
+        <strong>{enrichment.pain_hypothesis || enrichment.notes || latestContext || 'Validar geração previsível de oportunidades e dependência dos canais atuais.'}</strong>
+      </div>
+      <div className="prep-card prep-links">
+        <span>Canais pesquisados</span>
+        {links.length ? links.map((item) => <ResearchItem key={item.key} item={item} setToast={setToast} compact />) : <strong>Site, Instagram e LinkedIn ainda não salvos.</strong>}
+      </div>
+    </div>
+  );
+}
+
+function LeadDataPanel({ lead, selectedPhone, onSelectPhone, setToast }) {
+  const [note, setNote] = useState('');
+  const [localNotes, setLocalNotes] = useState([]);
+  const [activeTab, setActiveTab] = useState('context');
+  useEffect(() => {
+    setLocalNotes([]);
+    setNote('');
+    setActiveTab('context');
+  }, [lead?.id]);
+
+  async function addNote() {
+    if (!note.trim()) return;
+    try {
+      const saved = await api(`/api/leads/${lead.id}/notes`, { method: 'POST', body: { body: note, note_type: 'MANUAL' } });
+      setLocalNotes((current) => [{ created_at: saved.created_at, title: 'MANUAL', note: saved.body }, ...current]);
+      setNote('');
+      setToast('Nota adicionada ao lead.');
+    } catch (error) {
+      setToast(error.message);
+    }
+  }
+
+  const rawEntries = Object.entries(lead?.rawData || {}).filter(([, value]) => value !== null && value !== undefined && value !== '');
+  const contextItems = [...localNotes, ...(lead?.recentContext || [])];
+  const enrichmentEntries = buildEnrichmentEntries(lead?.enrichment || {});
+  const tabs = [
+    ['context', 'Contexto', contextItems.length],
+    ['research', 'Pesquisa', enrichmentEntries.length],
+    ['phones', 'Telefones', lead?.phones?.length || 0],
+    ['recordings', 'Ligações', lead?.recordings?.length || 0],
+    ['contacts', 'Sócios', lead?.contacts?.length || 0],
+    ['timeline', 'Timeline', lead?.timeline?.length || 0],
+    ['raw', 'Planilha', rawEntries.length]
+  ];
+
+  function handlePhoneSelect(phone) {
+    if (!onSelectPhone) return;
+    onSelectPhone(phone);
+  }
+
+  return (
+    <div className="lead-data-panel tabbed-context-panel">
+      <div className="context-panel-head">
+        <div>
+          <span className="eyebrow">Painel contextual</span>
+          <strong>Pesquisa, telefones, sócios e histórico do lead</strong>
+        </div>
+        <span className="pill">{lead?.openTasks?.length || 0} abertas</span>
+      </div>
+
+      <div className="context-tab-list" role="tablist" aria-label="Dados do lead">
+        {tabs.map(([id, label, count]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === id}
+            className={activeTab === id ? 'active' : ''}
+            onClick={() => setActiveTab(id)}
+          >
+            {label}
+            <span>{count}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="context-tab-panel" role="tabpanel">
+        {activeTab === 'context' && (
+          <div className="lead-data-section">
+            <div className="mini-head">
+              <strong>Contexto recente</strong>
+              <span>{contextItems.length}</span>
+            </div>
+            {contextItems.slice(0, 6).map((item, index) => (
+              <div className="context-note" key={`${item.created_at}-${index}`}>
+                <small>{formatDate(item.created_at)} · {item.title}</small>
+                <span>{item.note}</span>
+              </div>
+            ))}
+            {!contextItems.length && <p className="empty-line">Sem notas anteriores para este lead.</p>}
+            <div className="quick-note">
+              <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Adicionar nota rápida" />
+              <button type="button" onClick={addNote}>Salvar</button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'research' && (
+          <div className="lead-data-section research-section">
+            <div className="mini-head">
+              <strong>Pesquisa BDR</strong>
+              <span>{enrichmentEntries.length}</span>
+            </div>
+            {enrichmentEntries.length ? (
+              <div className="research-grid">
+                {enrichmentEntries.map((item) => <ResearchItem key={item.key} item={item} setToast={setToast} />)}
+              </div>
+            ) : (
+              <p className="empty-line">Sem pesquisa salva ainda para este lead.</p>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'phones' && (
+          <div className="lead-data-section">
+            <div className="mini-head">
+              <strong>Telefones do lead</strong>
+              <span>{lead?.phones?.length || 0}</span>
+            </div>
+            <div className="phone-grid">
+              {(lead?.phones || []).map((phone) => {
+                const selected = String(phone.phone) === String(selectedPhone);
+                return (
+                  <div
+                    className={`phone-card ${selected ? 'selected' : ''} ${phone.do_not_call ? 'blocked' : ''} ${onSelectPhone ? 'actionable' : ''}`}
+                    key={phone.id}
+                    role={onSelectPhone ? 'button' : undefined}
+                    tabIndex={onSelectPhone ? 0 : undefined}
+                    onClick={() => handlePhoneSelect(phone.phone)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') handlePhoneSelect(phone.phone);
+                    }}
+                  >
+                    <div className="phone-card-head">
+                      <strong>{phone.phone}</strong>
+                      <CopyButton value={phone.phone} label="Telefone" setToast={setToast} />
+                    </div>
+                    <span>{phone.source || 'base'} · {phoneStatusText(phone)}</span>
+                    {phone.owner_name && <small>Dono: {phone.owner_name}</small>}
+                    {phone.validation_note && <small>{phone.validation_note}</small>}
+                    {phone.do_not_call ? <small className="danger-text">não ligar novamente</small> : null}
+                    {onSelectPhone && (
+                      <button
+                        className="phone-select-button"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handlePhoneSelect(phone.phone);
+                        }}
+                      >
+                        {selected ? 'Selecionado' : 'Usar na ligação'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'contacts' && (
+          <div className="lead-data-section">
+            <div className="mini-head">
+              <strong>Sócios e contatos</strong>
+              <span>{lead?.contacts?.length || 0}</span>
+            </div>
+            <div className="compact-list">
+              {(lead?.contacts || []).map((contact) => (
+                <div className="compact-row" key={contact.id}>
+                  <span>{contact.name}</span>
+                  <small>{contact.role || 'Contato'}{contact.cpf ? ` · ${contact.cpf}` : ''}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'recordings' && (
+          <div className="lead-data-section">
+            <div className="mini-head">
+              <strong>Ligações</strong>
+              <span>{lead?.recordings?.length || 0}</span>
+            </div>
+            {(lead?.recordings || []).length ? (
+              <div className="recording-list">
+                {(lead?.recordings || []).map((rec) => (
+                  <div className="recording-item" key={rec.id}>
+                    <div className="recording-item-head">
+                      <strong>{rec.phone} · {rec.qualification || rec.classification || 'ligação'}</strong>
+                      <small>{formatDate(rec.created_at)}{rec.duration_seconds ? ` · ${rec.duration_seconds}s` : ''}</small>
+                    </div>
+                    {/^[a-f0-9]{24}$/.test(rec.call_id || '') && (
+                      <audio controls src={`/api/calls/${rec.id}/recording`} preload="none" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-line">Nenhuma ligação registrada para este lead.</p>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'timeline' && <TimelineList events={lead?.timeline || []} />}
+
+        {activeTab === 'raw' && (
+          <div className="raw-data">
+            <div className="mini-head">
+              <strong>Todos os dados da planilha</strong>
+              <span>{rawEntries.length}</span>
+            </div>
+            <div className="raw-grid">
+              {rawEntries.map(([key, value]) => (
+                <div className="raw-item" key={key}>
+                  <span>{key}</span>
+                  <strong>{String(value)}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskFields({ task, lead, fields, update, template, subject, startCall, callId, loading }) {
+  if (task.type === 'ENRICHMENT') {
+    return (
+      <div className="form-grid">
+        <Input label="Telefone encontrado" value={fields.phone_found || ''} onChange={(v) => update('phone_found', v)} />
+        <Input label="Telefone alternativo" value={fields.alternate_phone || ''} onChange={(v) => update('alternate_phone', v)} />
+        <Select label="Fonte do telefone" value={fields.phone_source || ''} onChange={(v) => update('phone_source', v)} options={['Google Maps', 'Site', 'Receita/CNPJ', 'LinkedIn', 'Indicação interna', 'Outro']} />
+        <Input label="Site" value={fields.site || ''} onChange={(v) => update('site', v)} />
+        <Input label="Instagram" value={fields.instagram || ''} onChange={(v) => update('instagram', v)} />
+        <Input label="LinkedIn empresa" value={fields.linkedin_company || ''} onChange={(v) => update('linkedin_company', v)} />
+        <Input label="Decisor" value={fields.decision_maker || ''} onChange={(v) => update('decision_maker', v)} />
+        <Input label="Cargo" value={fields.decision_role || ''} onChange={(v) => update('decision_role', v)} />
+        <Textarea label="Rapport / gancho de abertura" value={fields.rapport || ''} onChange={(v) => update('rapport', v)} />
+        <Textarea label="Hipótese de dor" value={fields.pain_hypothesis || ''} onChange={(v) => update('pain_hypothesis', v)} />
+        <Textarea label="Observação" value={fields.notes || ''} onChange={(v) => update('notes', v)} wide />
+      </div>
+    );
+  }
+
+  if (task.type === 'CALL') {
+    return (
+      <div className="call-execution-grid">
+        <section className="call-card call-card-primary">
+          <div className="call-card-head">
+            <strong>Ligar agora</strong>
+            <span>Escolha o número e registre se a conversa foi útil.</span>
+          </div>
+          <PhonePicker lead={lead} value={fields.phone || ''} onChange={(v) => update('phone', v)} />
+          <SignificanceToggle value={fields.call_significance || ''} onChange={(v) => update('call_significance', v)} />
+          <div className="button-row call-buttons">
+            <button className="primary" onClick={startCall} disabled={loading}><Phone size={17} /> Ligar pela 3C+</button>
+            <a className="secondary-link" href={`tel:${digits(fields.phone || task.primary_phone)}`}><Phone size={17} /> Telefone local</a>
+          </div>
+        </section>
+
+        <section className="call-card">
+          <div className="call-card-head">
+            <strong>Validação do contato</strong>
+            <span>Marque o vínculo real do número durante a ligação.</span>
+          </div>
+          <Select label="Quem atendeu" value={fields.reached_person || ''} onChange={(v) => update('reached_person', v)} options={['Não atendeu', 'Decisor', 'Sócio', 'Secretaria/gatekeeper', 'Financeiro', 'Outro contato']} />
+          <Select label="Vínculo do telefone" value={fields.phone_relationship || ''} onChange={(v) => update('phone_relationship', v)} options={['DECISION_MAKER', 'COMPANY', 'GATEKEEPER', 'NO_LINK', 'INVALID']} labels={{ DECISION_MAKER: 'Telefone do decisor', COMPANY: 'Telefone da empresa', GATEKEEPER: 'Gatekeeper/secretaria', NO_LINK: 'Sem vínculo com o lead', INVALID: 'Inválido' }} />
+          <Select label="Status do telefone" value={fields.phone_status || ''} onChange={(v) => update('phone_status', v)} options={['VALID_DECISION_MAKER', 'CONTACTED', 'GATEKEEPER', 'NO_LINK', 'INVALID']} labels={{ VALID_DECISION_MAKER: 'Validado decisor', CONTACTED: 'Contatado', GATEKEEPER: 'Gatekeeper', NO_LINK: 'Sem vínculo', INVALID: 'Inválido' }} />
+          <Input label="Nome vinculado ao telefone" value={fields.phone_owner_name || ''} onChange={(v) => update('phone_owner_name', v)} />
+          <label className="check-field">
+            <input type="checkbox" checked={Boolean(fields.phone_do_not_call)} onChange={(event) => update('phone_do_not_call', event.target.checked)} />
+            <span>Não ligar novamente para este número</span>
+          </label>
+          <Input label="Nota da validação do telefone" value={fields.phone_validation_note || ''} onChange={(v) => update('phone_validation_note', v)} />
+        </section>
+
+        <section className="call-card">
+          <div className="call-card-head">
+            <strong>Ponte multicanal</strong>
+            <span>Use quando a conversa virar e-mail, material ou registro 3C+.</span>
+          </div>
+          <Input label="E-mail do decisor / empresa" value={fields.recipient_email || ''} onChange={(v) => update('recipient_email', v)} />
+          <Input label="Motivo para funil de e-mail" value={fields.email_funnel_reason || ''} onChange={(v) => update('email_funnel_reason', v)} />
+          <Input label="Call ID 3C+" value={callId || fields.call_id || ''} onChange={(v) => update('call_id', v)} />
+          <Input label="Áudio / gravação" value={fields.call_audio_url || ''} onChange={(v) => update('call_audio_url', v)} />
+        </section>
+
+        <section className="call-card call-card-wide">
+          <div className="call-card-head">
+            <strong>Resultado da conversa</strong>
+            <span>Preencha só o necessário para a próxima task nascer certa.</span>
+          </div>
+          <div className="call-card-grid">
+            <Textarea label="Nota curta da ligação" value={fields.conversation_note || ''} onChange={(v) => update('conversation_note', v)} />
+            <Textarea label="Objeção ou motivo" value={fields.reason || ''} onChange={(v) => update('reason', v)} />
+            <DateTime label="Retorno prometido" value={fields.followup_at || ''} onChange={(v) => update('followup_at', v)} />
+            <DateTime label="Reunião marcada" value={fields.meeting_at || ''} onChange={(v) => update('meeting_at', v)} />
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (['WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(task.type)) {
+    return (
+      <div className="form-grid">
+        {task.type === 'EMAIL' && (
+          <>
+            <Input label="Destinatário" value={fields.recipient_email || ''} onChange={(v) => update('recipient_email', v)} />
+            <Input label="Assunto" value={fields.subject || subject || 'Contato Cloud Marketing'} onChange={(v) => update('subject', v)} />
+          </>
+        )}
+        {task.payload?.funnel === 'EMAIL_FUNNEL' && (
+          <div className="funnel-context wide">
+            <strong>Funil de e-mail · etapa {task.payload.emailFunnelStep}</strong>
+            <span>{task.payload.funnelReason || 'Ponte criada pela ligação'}</span>
+          </div>
+        )}
+        <Textarea label="Mensagem pronta" value={fields.message || template} onChange={(v) => update('message', v)} wide />
+        <Textarea label="Resposta ou contexto" value={fields.conversation_note || ''} onChange={(v) => update('conversation_note', v)} />
+        <Textarea label="Motivo / objeção" value={fields.reason || ''} onChange={(v) => update('reason', v)} />
+        <ChannelActions task={task} lead={lead} message={fields.message || template} phone={fields.phone || task.primary_phone} email={fields.recipient_email} subject={fields.subject || subject} />
+      </div>
+    );
+  }
+
+  if (task.type === 'FOLLOW_UP') {
+    return (
+      <div className="form-grid">
+        <Select label="Tipo de follow" value={fields.followup_type || ''} onChange={(v) => update('followup_type', v)} options={['RETORNO_PROMETIDO', 'GATEKEEPER', 'EMAIL', 'WHATSAPP', 'PROPOSTA', 'REMARCACAO']} labels={{ RETORNO_PROMETIDO: 'Retorno prometido', GATEKEEPER: 'Gatekeeper', EMAIL: 'Direcionar e-mail', WHATSAPP: 'Direcionar WhatsApp', PROPOSTA: 'Proposta', REMARCACAO: 'Remarcação' }} />
+        <Input label="Pessoa que pediu retorno" value={fields.promised_by || ''} onChange={(v) => update('promised_by', v)} />
+        <DateTime label="Nova data/hora prometida" value={fields.followup_at || ''} onChange={(v) => update('followup_at', v)} />
+        <DateTime label="Reunião marcada" value={fields.meeting_at || ''} onChange={(v) => update('meeting_at', v)} />
+        <Textarea label="Combinado / resumo" value={fields.conversation_note || ''} onChange={(v) => update('conversation_note', v)} />
+        <Textarea label="Risco de esfriar ou motivo" value={fields.reason || ''} onChange={(v) => update('reason', v)} />
+      </div>
+    );
+  }
+
+  if (task.type === 'MEETING_CONFIRMATION') {
+    return (
+      <div className="form-grid">
+        <DateTime label="Data/hora da reunião" value={fields.meeting_at || task.due_at || ''} onChange={(v) => update('meeting_at', v)} />
+        <Input label="Participantes" value={fields.participants || ''} onChange={(v) => update('participants', v)} />
+        <Textarea label="Dor para o closer" value={fields.closer_briefing || ''} onChange={(v) => update('closer_briefing', v)} />
+        <DateTime label="Remarcar / retorno" value={fields.followup_at || ''} onChange={(v) => update('followup_at', v)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="form-grid">
+      <Input label="Valor da proposta" value={fields.value || ''} onChange={(v) => update('value', v)} />
+      <DateTime label="Previsão de fechamento" value={fields.expected_close_at || ''} onChange={(v) => update('expected_close_at', v)} />
+      <Textarea label="Objeção" value={fields.objection || ''} onChange={(v) => update('objection', v)} />
+      <Textarea label="Próximo passo" value={fields.next_step || ''} onChange={(v) => update('next_step', v)} />
+      <Textarea label="Motivo se perdido" value={fields.reason || ''} onChange={(v) => update('reason', v)} wide />
+    </div>
+  );
+}
+
+function PhonePicker({ lead, value, onChange }) {
+  return (
+    <label className="field">
+      <span>Telefone para ligar</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Selecionar telefone</option>
+        {(lead?.phones || []).map((phone) => (
+          <option key={phone.id} value={phone.phone}>
+            {phone.phone} · {phone.source || 'base'} · {phone.do_not_call ? 'não ligar' : phoneStatusText(phone)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function SignificanceToggle({ value, onChange }) {
+  return (
+    <div className="segmented-field">
+      <span>Qualidade da ligação</span>
+      <div>
+        <button type="button" className={value === 'SIGNIFICANT' ? 'active' : ''} onClick={() => onChange('SIGNIFICANT')}>Significativa</button>
+        <button type="button" className={value === 'NON_SIGNIFICANT' ? 'active' : ''} onClick={() => onChange('NON_SIGNIFICANT')}>Não significativa</button>
+      </div>
+    </div>
+  );
+}
+
+function ChannelActions({ task, message, phone, email, subject = 'Contato Cloud Marketing' }) {
+  const cleanPhone = digits(phone);
+  const waPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+  const encodedSubject = encodeURIComponent(subject || 'Contato Cloud Marketing');
+  const body = encodeURIComponent(message || '');
+  return (
+    <div className="button-row wide">
+      {task.type === 'WHATSAPP' && (
+        <a className="primary" href={`https://wa.me/${waPhone}?text=${encodeURIComponent(message || '')}`} target="_blank" rel="noreferrer">
+          <MessageCircle size={17} /> Abrir WhatsApp
+        </a>
+      )}
+      {task.type === 'EMAIL' && (
+        <a className="primary" href={`mailto:${email || ''}?subject=${encodedSubject}&body=${body}`}>
+          <Mail size={17} /> Abrir e-mail
+        </a>
+      )}
+      {task.type === 'LINKEDIN' && (
+        <a className="primary" href="https://www.linkedin.com/search/results/companies/" target="_blank" rel="noreferrer">
+          <ExternalLink size={17} /> Abrir LinkedIn
+        </a>
+      )}
+    </div>
+  );
+}
+
+function OutcomeBar({ task, complete, loading, onSaveDraft, savingDraft }) {
+  const outcomes = outcomesFor(task);
+  const primaryCallOutcomes = new Set(['no_answer', 'callback_requested', 'meeting_scheduled', 'not_interested', 'phone_invalid']);
+  const visibleOutcomes = task.type === 'CALL' ? outcomes.filter((item) => primaryCallOutcomes.has(item.outcome)) : outcomes;
+  const secondaryOutcomes = task.type === 'CALL' ? outcomes.filter((item) => !primaryCallOutcomes.has(item.outcome)) : [];
+  const renderOutcome = (item) => (
+    <button key={item.outcome} className={item.kind || 'secondary'} onClick={() => complete(item.outcome)} disabled={loading}>
+      {item.icon === 'check' ? <Check size={16} /> : <ChevronRight size={16} />}
+      {item.label}
+    </button>
+  );
+  return (
+    <div className={`outcome-bar ${task.type === 'CALL' ? 'sticky-action-bar' : ''}`}>
+      <div className="draft-actions">
+        <button className="secondary" type="button" onClick={onSaveDraft} disabled={savingDraft || loading}>
+          <Save size={16} />
+          {savingDraft ? 'Salvando...' : 'Salvar rascunho'}
+        </button>
+      </div>
+      <div className="outcome-actions">
+        {visibleOutcomes.map(renderOutcome)}
+        {secondaryOutcomes.length > 0 && (
+          <details className="more-outcomes">
+            <summary>
+              <MoreHorizontal size={16} />
+              Mais
+            </summary>
+            <div>
+              {secondaryOutcomes.map(renderOutcome)}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function outcomesFor(task) {
+  const type = task.type;
+  if (type === 'ENRICHMENT') {
+    return [
+      { outcome: 'approve', label: 'Aprovar e iniciar cadência', kind: 'primary', icon: 'check' },
+      { outcome: 'research_again', label: 'Pesquisar mais' },
+      { outcome: 'no_fit', label: 'Descartar sem fit' }
+    ];
+  }
+  if (type === 'CALL') {
+    return [
+      { outcome: 'no_answer', label: 'Não atendeu' },
+      { outcome: 'voicemail', label: 'Caixa postal' },
+      { outcome: 'call_dropped', label: 'Caiu' },
+      { outcome: 'gatekeeper', label: 'Gatekeeper' },
+      { outcome: 'gatekeeper_email', label: 'Gatekeeper -> e-mail' },
+      { outcome: 'email_only', label: 'Só por e-mail' },
+      { outcome: 'material_requested', label: 'Pediu material' },
+      { outcome: 'whatsapp_negotiation', label: 'Negociar WhatsApp' },
+      { outcome: 'callback_requested', label: 'Pediu retorno' },
+      { outcome: 'meeting_scheduled', label: 'Reunião marcada', kind: 'primary', icon: 'check' },
+      { outcome: 'phone_invalid', label: 'Telefone inválido' },
+      { outcome: 'not_interested', label: 'Sem interesse' },
+      { outcome: 'out_of_icp', label: 'Fora ICP' }
+    ];
+  }
+  if (['WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(type)) {
+    const isEmailFunnel = task.payload?.funnel === 'EMAIL_FUNNEL';
+    return [
+      { outcome: type === 'LINKEDIN' ? 'linkedin_done' : 'sent', label: isEmailFunnel ? 'Enviado e avançar funil' : 'Registrar envio', kind: 'primary', icon: 'check' },
+      { outcome: 'no_response', label: isEmailFunnel ? 'Sem resposta e avançar' : 'Sem resposta' },
+      { outcome: 'interested', label: 'Respondeu com interesse' },
+      { outcome: 'not_interested', label: 'Sem interesse' }
+    ];
+  }
+  if (type === 'FOLLOW_UP') {
+    return [
+      { outcome: 'callback_requested', label: 'Novo retorno' },
+      { outcome: 'send_email', label: 'Direcionar e-mail' },
+      { outcome: 'send_whatsapp', label: 'Direcionar WhatsApp' },
+      { outcome: 'resume_cadence', label: 'Voltar cadência' },
+      { outcome: 'meeting_scheduled', label: 'Reunião marcada', kind: 'primary', icon: 'check' },
+      { outcome: 'not_interested', label: 'Sem interesse' },
+      { outcome: 'no_answer', label: 'Não consegui falar' }
+    ];
+  }
+  if (type === 'MEETING_CONFIRMATION') {
+    return [
+      { outcome: 'confirmed', label: 'Confirmada', kind: 'primary', icon: 'check' },
+      { outcome: 'meeting_happened', label: 'Reunião ocorreu' },
+      { outcome: 'reschedule', label: 'Remarcar' },
+      { outcome: 'no_show', label: 'No-show' }
+    ];
+  }
+  return [
+    { outcome: 'proposal_sent', label: 'Proposta enviada', kind: 'primary', icon: 'check' },
+    { outcome: 'follow_sent', label: 'Follow-up feito' },
+    { outcome: 'won', label: 'Ganho' },
+    { outcome: 'lost', label: 'Perdido' }
+  ];
+}
+
+function TimelineList({ events }) {
+  return (
+    <div className="timeline-list">
+      {(events || []).slice(0, 12).map((event) => (
+        <div className="timeline-item" key={event.id}>
+          <time>{formatDate(event.created_at)}</time>
+          <strong>{event.title}</strong>
+          <span>{event.event_type}</span>
+        </div>
+      ))}
+      {!(events || []).length && <p className="empty-line">Sem eventos na timeline.</p>}
+    </div>
+  );
+}
+
+function LeadTimeline({ lead }) {
+  return (
+    <div className="timeline">
+      <div className="section-head">
+        <h3>Timeline</h3>
+        <span className="pill">{lead?.timeline?.length || 0}</span>
+      </div>
+      <TimelineList events={lead?.timeline || []} />
+    </div>
+  );
+}
+
+function Input({ label, value, onChange }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function DateTime({ label, value, onChange }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input type="datetime-local" value={toLocalInput(value)} onChange={(event) => onChange(fromLocalInput(event.target.value))} />
+    </label>
+  );
+}
+
+function Select({ label, value, onChange, options, labels = {} }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Selecionar</option>
+        {options.map((option) => <option key={option} value={option}>{labels[option] || option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function Textarea({ label, value, onChange, wide = false }) {
+  return (
+    <label className={`field ${wide ? 'wide' : ''}`}>
+      <span>{label}</span>
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} />
+    </label>
+  );
+}
+
+function QueueView({ type, onSelectTask, setView, setToast }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    api(`/api/tasks/queue/${type}`).then(setItems).catch((error) => setToast(error.message));
+  }, [type]);
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">Fila</span>
+          <h2>{TYPE_LABEL[type]}</h2>
+        </div>
+        <span className="pill">{items.length} abertas</span>
+      </div>
+      <div className="list-grid">
+        {items.map((task) => (
+          <button key={task.id} className="lead-list-row" onClick={() => { onSelectTask(task.id); setView('execution'); }}>
+            <div>
+              <strong>{companyNameFromTask(task)}</strong>
+              <span>{task.title} · {formatDate(task.due_at)}</span>
+            </div>
+            <ChevronRight size={18} />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AgendaView({ onSelectTask, setView, setToast }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    Promise.all([
+      api('/api/tasks/queue/FOLLOW_UP'),
+      api('/api/tasks/queue/MEETING_CONFIRMATION'),
+      api('/api/tasks/queue/CLOSER_FOLLOW_UP')
+    ]).then((groups) => setItems(groups.flat().sort((a, b) => new Date(a.due_at) - new Date(b.due_at))))
+      .catch((error) => setToast(error.message));
+  }, []);
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <h2>Agenda operacional</h2>
+        <span className="pill">{items.length} compromissos</span>
+      </div>
+      <div className="list-grid">
+        {items.map((task) => (
+          <button key={task.id} className="lead-list-row" onClick={() => { onSelectTask(task.id); setView('execution'); }}>
+            <div>
+              <strong>{formatDate(task.due_at)} · {companyNameFromTask(task)}</strong>
+              <span>{TYPE_LABEL[task.type]} · {task.title}</span>
+            </div>
+            <ChevronRight size={18} />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FunnelsView({ data, onSelectTask, setView }) {
+  const transitions = Object.fromEntries((data?.transitions || []).map((row) => [row.event_type, row.total]));
+  return (
+    <>
+      <div className="funnel-metrics">
+        <div className="metric">
+          <span>Entraram no e-mail</span>
+          <strong>{transitions.EMAIL_FUNNEL_ENTERED || 0}</strong>
+        </div>
+        <div className="metric">
+          <span>Avanços de e-mail</span>
+          <strong>{transitions.EMAIL_FUNNEL_NEXT || 0}</strong>
+        </div>
+        <div className="metric">
+          <span>E-mail concluído</span>
+          <strong>{transitions.EMAIL_FUNNEL_FINISHED || 0}</strong>
+        </div>
+        <div className="metric">
+          <span>Reuniões</span>
+          <strong>{transitions.MEETING_SCHEDULED || 0}</strong>
+        </div>
+      </div>
+      <div className="funnel-board">
+        {(data?.buckets || []).map((bucket) => (
+          <section className="funnel-col" key={bucket.id}>
+            <div className="funnel-col-head">
+              <div>
+                <strong>{bucket.label}</strong>
+                <span>{bucket.description}</span>
+              </div>
+              <small>{bucket.count}</small>
+            </div>
+            <div className="funnel-cards">
+              {bucket.tasks.map((task) => (
+                <button
+                  className="funnel-card"
+                  key={task.id}
+                  onClick={() => {
+                    onSelectTask(task.id);
+                    setView('execution');
+                  }}
+                >
+                  <strong>{companyNameFromTask(task)}</strong>
+                  <span>{TYPE_LABEL[task.type]} · {task.title}</span>
+                  <small>{formatDate(task.due_at)}{task.payload?.funnelReason ? ` · ${task.payload.funnelReason}` : ''}</small>
+                </button>
+              ))}
+              {!bucket.tasks.length && <p className="empty-line">Sem leads nesta etapa.</p>}
+            </div>
+          </section>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function CadenceView({ setToast }) {
+  const [cadence, setCadence] = useState(null);
+  useEffect(() => {
+    api('/api/cadences').then((rows) => setCadence(rows[0])).catch((error) => setToast(error.message));
+  }, []);
+
+  function updateStep(index, key, value) {
+    setCadence((current) => ({
+      ...current,
+      steps: current.steps.map((step, stepIndex) => stepIndex === index ? { ...step, [key]: value } : step)
+    }));
+  }
+
+  async function save() {
+    await api(`/api/cadences/${cadence.id}`, { method: 'PUT', body: { steps: cadence.steps } });
+    setToast('Cadência salva.');
+  }
+
+  if (!cadence) return <section className="panel">Carregando cadência...</section>;
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">Motor editável</span>
+          <h2>{cadence.name}</h2>
+        </div>
+        <button className="primary" onClick={save}><Check size={16} /> Salvar</button>
+      </div>
+      <div className="cadence-table">
+        <div className="cadence-head">Step</div>
+        <div className="cadence-head">Tipo</div>
+        <div className="cadence-head">Título</div>
+        <div className="cadence-head">D+ dias</div>
+        <div className="cadence-head">Hora</div>
+        {cadence.steps.map((step, index) => (
+          <div className="cadence-row" key={step.step}>
+            <strong>{step.step}</strong>
+            <select value={step.type} onChange={(event) => updateStep(index, 'type', event.target.value)}>
+              {Object.keys(TYPE_LABEL).filter((type) => ['CALL', 'WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(type)).map((type) => <option key={type} value={type}>{TYPE_LABEL[type]}</option>)}
+            </select>
+            <input value={step.title} onChange={(event) => updateStep(index, 'title', event.target.value)} />
+            <input type="number" value={step.dayOffset} onChange={(event) => updateStep(index, 'dayOffset', Number(event.target.value))} />
+            <input value={step.time} onChange={(event) => updateStep(index, 'time', event.target.value)} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LeadSearchView({ setToast }) {
+  const [query, setQuery] = useState('');
+  const [leads, setLeads] = useState([]);
+  const [selected, setSelected] = useState(null);
+
+  async function search(nextQuery = query) {
+    const rows = await api(`/api/leads?q=${encodeURIComponent(nextQuery)}`);
+    setLeads(rows);
+  }
+
+  async function openLead(id) {
+    try {
+      setSelected(await api(`/api/leads/${id}`));
+    } catch (error) {
+      setToast(error.message);
+    }
+  }
+
+  useEffect(() => {
+    search('').catch((error) => setToast(error.message));
+  }, []);
+
+  return (
+    <div className="two-col">
+      <section className="panel">
+        <div className="searchbar">
+          <Search size={18} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar empresa ou CNPJ" />
+          <button onClick={() => search()}>Buscar</button>
+        </div>
+        <div className="list-grid">
+          {leads.map((lead) => (
+            <button key={lead.id} className="lead-list-row" onClick={() => openLead(lead.id)}>
+              <div>
+                <strong>{companyNameFromLead(lead)}</strong>
+                <span>{lead.cnpj} · {lead.state} · {lead.open_tasks} tarefas abertas</span>
+              </div>
+              <ChevronRight size={18} />
+            </button>
+          ))}
+        </div>
+      </section>
+      <LeadDetail lead={selected} setToast={setToast} />
+    </div>
+  );
+}
+
+function LeadDetail({ lead, setToast }) {
+  if (!lead) {
+    return (
+      <section className="panel empty-state">
+        <Search size={28} />
+        <h2>Lead 360</h2>
+        <p>Abra uma empresa para ver contatos, telefones, tarefas e histórico.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">{lead.state}</span>
+          <h2>{companyNameFromLead(lead)}</h2>
+        </div>
+        <span className="pill">{lead.openTasks?.length || 0} tarefas</span>
+      </div>
+      <div className="info-grid">
+        <Info label="CNPJ" value={lead.cnpj} />
+        <Info label="Cidade" value={lead.city} />
+        <Info label="CNAE" value={lead.cnae} />
+        <Info label="Cadência" value={lead.current_cadence_step ? `Step ${lead.current_cadence_step}` : 'Não iniciada'} />
+      </div>
+      <LeadDataPanel lead={lead} selectedPhone={lead.phones?.[0]?.phone} setToast={setToast} />
+      <LeadTimeline lead={lead} />
+    </section>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div className="info">
+      <span>{label}</span>
+      <strong>{value || '-'}</strong>
+    </div>
+  );
+}
+
+function DashboardView({ dashboard, closerDashboard }) {
+  return (
+    <>
+      <MetricGrid dashboard={dashboard} />
+      <div className="two-col">
+        <section className="panel">
+          <h2>Resultados BDR</h2>
+          <BarRows rows={dashboard?.byType || []} labelKey="type" valueKey="total" />
+        </section>
+        <section className="panel">
+          <h2>Tabulações</h2>
+          <BarRows rows={dashboard?.outcomes || []} labelKey="outcome" valueKey="total" />
+        </section>
+      </div>
+      <section className="panel">
+        <div className="section-head">
+          <h2>Closer</h2>
+          <span className="pill">R$ {Number(closerDashboard?.proposalValue || 0).toLocaleString('pt-BR')}</span>
+        </div>
+        <BarRows rows={closerDashboard?.byStage || []} labelKey="stage" valueKey="total" />
+      </section>
+    </>
+  );
+}
+
+function BarRows({ rows, labelKey, valueKey }) {
+  const max = Math.max(...rows.map((row) => Number(row[valueKey] || 0)), 1);
+  return (
+    <div className="barrows">
+      {rows.map((row) => (
+        <div className="barrow" key={row[labelKey] || 'sem-status'}>
+          <span>{TYPE_LABEL[row[labelKey]] || STAGE_LABEL[row[labelKey]] || row[labelKey] || 'Sem status'}</span>
+          <div><i style={{ width: `${(Number(row[valueKey] || 0) / max) * 100}%` }} /></div>
+          <strong>{row[valueKey]}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CrmView({ setToast }) {
+  const [items, setItems] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
+  const [selectedPipelineId, setSelectedPipelineId] = useState('');
+  const [newPipelineName, setNewPipelineName] = useState('');
+  const [newStageName, setNewStageName] = useState('');
+
+  async function loadCrm() {
+    const [opportunities, pipelineRows] = await Promise.all([
+      api('/api/crm/opportunities'),
+      api('/api/crm/pipelines')
+    ]);
+    setItems(opportunities);
+    setPipelines(pipelineRows);
+    if (!selectedPipelineId && pipelineRows[0]) setSelectedPipelineId(String(pipelineRows[0].id));
+  }
+
+  useEffect(() => {
+    loadCrm().catch((error) => setToast(error.message));
+  }, []);
+
+  const selectedPipeline = pipelines.find((pipeline) => String(pipeline.id) === String(selectedPipelineId)) || pipelines[0];
+  const stageIds = new Set((selectedPipeline?.stages || []).map((stage) => Number(stage.id)));
+  const visibleItems = items.filter((item) => !selectedPipeline || Number(item.pipeline_id) === Number(selectedPipeline.id) || (!item.pipeline_id && stageIds.has(Number(item.stage_id))));
+
+  async function createPipeline() {
+    if (!newPipelineName.trim()) return;
+    const pipeline = await api('/api/crm/pipelines', { method: 'POST', body: { name: newPipelineName } });
+    setNewPipelineName('');
+    setToast('Pipeline criado.');
+    await loadCrm();
+    setSelectedPipelineId(String(pipeline.id));
+  }
+
+  async function createStage() {
+    if (!selectedPipeline || !newStageName.trim()) return;
+    await api(`/api/crm/pipelines/${selectedPipeline.id}/stages`, { method: 'POST', body: { name: newStageName } });
+    setNewStageName('');
+    setToast('Etapa criada.');
+    await loadCrm();
+  }
+
+  async function moveOpportunity(opportunityId, stageId) {
+    await api(`/api/crm/opportunities/${opportunityId}`, { method: 'PATCH', body: { stage_id: Number(stageId) } });
+    setToast('Oportunidade movida.');
+    await loadCrm();
+  }
+
+  if (!pipelines.length) return <section className="panel">Carregando CRM...</section>;
+
+  return (
+    <>
+      <section className="panel crm-config">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Pipeline configurável</span>
+            <h2>{selectedPipeline?.name}</h2>
+          </div>
+          <select value={selectedPipelineId} onChange={(event) => setSelectedPipelineId(event.target.value)}>
+            {pipelines.map((pipeline) => <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>)}
+          </select>
+        </div>
+        <div className="crm-config-row">
+          <input value={newPipelineName} onChange={(event) => setNewPipelineName(event.target.value)} placeholder="Novo pipeline" />
+          <button className="secondary" onClick={createPipeline}>Criar pipeline</button>
+          <input value={newStageName} onChange={(event) => setNewStageName(event.target.value)} placeholder="Nova etapa neste pipeline" />
+          <button className="secondary" onClick={createStage}>Criar etapa</button>
+        </div>
+      </section>
+      <div className="pipeline">
+        {(selectedPipeline?.stages || []).map((stage) => {
+          const stageItems = visibleItems.filter((item) => Number(item.stage_id) === Number(stage.id) || (!item.stage_id && item.stage === stage.stage_key));
+          return (
+            <section className="pipeline-col" key={stage.id}>
+              <div className="task-group-title">
+                <span>{stage.name}</span>
+                <small>{stageItems.length}</small>
+              </div>
+              {stageItems.map((item) => (
+                <article className="opportunity" key={item.id}>
+                  <strong>{companyNameFromTask(item)}</strong>
+                  <span>{item.contact_name || 'Sem contato principal'}</span>
+                  <small>R$ {Number(item.value || 0).toLocaleString('pt-BR')} · {item.probability}%</small>
+                  <select value={item.stage_id || ''} onChange={(event) => moveOpportunity(item.id, event.target.value)}>
+                    {(selectedPipeline?.stages || []).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </article>
+              ))}
+              {!stageItems.length && <p className="empty-line">Sem oportunidades.</p>}
+            </section>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function SettingsView({ config }) {
+  const [summary, setSummary] = useState(null);
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [error, setError] = useState('');
+
+  async function loadIntegration() {
+    setLoading(true);
+    setError('');
+    try {
+      const [nextSummary, nextRecent] = await Promise.all([
+        api('/api/integrations/3c/summary'),
+        api('/api/integrations/3c/recent?limit=40')
+      ]);
+      setSummary(nextSummary);
+      setRecent(nextRecent);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runImport() {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await api('/api/import/csv', { method: 'POST' });
+      setImportResult(result);
+      await loadIntegration();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function runSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api('/api/integrations/3c/sync', { method: 'POST' });
+      setSyncResult(result);
+      await loadIntegration();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    loadIntegration();
+  }, []);
+
+  const today = summary?.today || {};
+  const cards = [
+    ['Eventos hoje', today.total || 0, 'total'],
+    ['Follow', today.follow || 0, 'follow'],
+    ['Agendou', today.meeting || 0, 'meeting'],
+    ['Não atendeu', today.noAnswer || 0, 'no_answer'],
+    ['Inválido', today.invalid || 0, 'phone_invalid'],
+    ['Sem vínculo', today.noLink || 0, 'phone_no_link'],
+    ['Sem interesse', today.notInterested || 0, 'not_interested'],
+    ['Fora ICP', today.outOfIcp || 0, 'out_of_icp'],
+    ['Gatekeeper', today.gatekeeper || 0, 'gatekeeper'],
+    ['Desconhecido', today.unknown || 0, 'unknown']
+  ];
+
+  return (
+    <>
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Integração</span>
+            <h2>3C+ discadora e webhook</h2>
+          </div>
+          <button className="secondary" type="button" onClick={loadIntegration} disabled={loading}>
+            Atualizar
+          </button>
+        </div>
+        <div className="info-grid">
+          <Info label="Base URL" value={config?.baseUrl} />
+          <Info label="Webhook público" value={config?.webhookPublicUrl || 'https://sales.yvex.online/api_3c_receiver.php'} />
+          <Info label="Token operador" value={config?.hasOperatorToken ? 'Configurado no .env' : 'Pendente'} />
+          <Info label="Token admin" value={config?.hasAdminToken ? 'Configurado no .env' : 'Pendente'} />
+          <Info label="Campanha" value={config?.campaignId || 'Não configurada'} />
+        </div>
+        <p className="settings-note">Tokens ficam somente no arquivo local `.env`. O frontend recebe apenas status booleano e nunca recebe o token real.</p>
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Leads da campanha</span>
+            <h2>Importar leads dos CSVs 3C+</h2>
+          </div>
+          <button className="primary" type="button" onClick={runImport} disabled={importing || loading}>
+            <Check size={16} />
+            {importing ? 'Importando...' : 'Importar CSVs'}
+          </button>
+        </div>
+        <p className="settings-note">Carrega os leads dos arquivos CSV da pasta configurada (CSV_IMPORT_DIR). Idempotente — pode rodar mais de uma vez sem duplicar.</p>
+        {importResult && (
+          <div className="threec-metrics">
+            <div className="threec-metric meeting"><span>Novos leads</span><strong>{importResult.imported}</strong></div>
+            <div className="threec-metric follow"><span>Atualizados</span><strong>{importResult.updated}</strong></div>
+            <div className="threec-metric connected"><span>Telefones</span><strong>{importResult.phonesAdded}</strong></div>
+            <div className="threec-metric total"><span>Arquivos</span><strong>{importResult.files}</strong></div>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Sincronização manual</span>
+            <h2>Carregar ligações do dia da 3C+</h2>
+          </div>
+          <button className="primary" type="button" onClick={runSync} disabled={syncing || loading}>
+            <RefreshCcw size={16} />
+            {syncing ? 'Sincronizando...' : 'Sincronizar agora'}
+          </button>
+        </div>
+        <p className="settings-note">Busca as ligações tabuladas na 3C+ e cria as tarefas automaticamente no sistema. Roda também a cada 5 minutos em segundo plano.</p>
+        {syncResult && (
+          <div className="threec-metrics">
+            <div className="threec-metric meeting"><span>Processadas</span><strong>{syncResult.processed}</strong></div>
+            <div className="threec-metric no_answer"><span>Puladas</span><strong>{syncResult.skipped}</strong></div>
+            <div className="threec-metric follow"><span>Duplicadas</span><strong>{syncResult.duplicate}</strong></div>
+            <div className="threec-metric unknown"><span>Total na janela</span><strong>{syncResult.total}</strong></div>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Retorno da discadora</span>
+            <h2>Tabulações recebidas hoje</h2>
+          </div>
+          {loading && <span className="pill">Carregando</span>}
+        </div>
+        {error && <div className="auth-error">{error}</div>}
+        <div className="threec-metrics">
+          {cards.map(([label, value, kind]) => (
+            <div className={`threec-metric ${kind}`} key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Auditoria operacional</span>
+            <h2>Últimas ligações que voltaram da 3C+</h2>
+          </div>
+          <span className="pill">{recent.length}</span>
+        </div>
+        <div className="threec-events">
+          <div className="threec-events-head">
+            <span>Lead</span>
+            <span>Telefone</span>
+            <span>Tabulação</span>
+            <span>Status</span>
+            <span>Quando</span>
+            <span>Próxima ação</span>
+          </div>
+          {recent.map((event) => (
+            <article className="threec-event-row" key={event.id}>
+              <div>
+                <strong>{event.trade_name || event.legal_name || event.company || 'Lead não vinculado'}</strong>
+                <span>{event.cnpj || event.event_type}</span>
+              </div>
+              <strong>{event.phone || '-'}</strong>
+              <div>
+                <span className={`threec-badge ${event.classification || 'unknown'}`}>
+                  {THREEC_CLASSIFICATION_LABEL[event.classification] || event.classification || 'Desconhecido'}
+                </span>
+                {event.qualification && <small>{event.qualification}</small>}
+              </div>
+              <span>{event.status}</span>
+              <span>{formatDate(event.created_at)}</span>
+              <span>{event.open_task_title || event.open_task_type || '-'}</span>
+            </article>
+          ))}
+          {!recent.length && !loading && <p className="empty-line">Nenhum webhook da 3C+ recebido ainda.</p>}
+        </div>
+      </section>
+    </>
+  );
+}
+
+export default App;

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.server-access
+data/*.db
+data/*.db-shm
+data/*.db-wal
+output/
+.playwright-cli/
+.playwright-mcp/
