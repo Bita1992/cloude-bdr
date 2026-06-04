@@ -325,58 +325,91 @@ function App() {
     return <LoginView onLogin={handleLogin} toast={toast} setToast={setToast} />;
   }
 
+  const username = auth.user?.username || 'BDR';
+  const initials = username.slice(0, 2).toUpperCase();
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">C</div>
-          <div>
-            <strong>Cloud BDR</strong>
-            <span>Sales engagement</span>
+    <div className="min-h-screen bg-background text-foreground">
+      {/* ── TopBar ── */}
+      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-xl">
+        <div className="mx-auto max-w-[1600px] px-5 h-14 flex items-center gap-3">
+          {/* Brand */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative h-7 w-7 rounded-md bg-primary/15 border border-primary/40 grid place-items-center">
+              <span className="h-2 w-2 rounded-full bg-primary" />
+            </div>
+            <span className="font-semibold text-lg leading-none tracking-tight">
+              cloude<span className="text-primary">·</span>bdr
+            </span>
+          </div>
+
+          {/* Nav */}
+          <nav className="hidden md:flex items-center gap-0.5 ml-4 text-sm">
+            {NAV.map((item) => {
+              const Icon = item.icon;
+              const active = view === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setView(item.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    active
+                      ? 'bg-surface-2 text-foreground'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-surface'
+                  }`}
+                >
+                  <Icon size={14} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Right actions */}
+          <div className="ml-auto flex items-center gap-2">
+            {/* Leads count badge */}
+            <span className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted-foreground font-mono">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+              {boot?.counts?.leads ?? '-'} leads
+            </span>
+
+            {/* Refresh */}
+            <button
+              className="h-8 w-8 grid place-items-center rounded-md border border-border bg-surface hover:bg-surface-2 transition-colors text-muted-foreground hover:text-foreground"
+              onClick={() => loadShell().catch((error) => setToast(error.message))}
+              title="Atualizar"
+            >
+              <RefreshCcw size={15} />
+            </button>
+
+            {/* Logout */}
+            <button
+              className="h-8 w-8 grid place-items-center rounded-md border border-border bg-surface hover:bg-surface-2 transition-colors text-muted-foreground hover:text-foreground"
+              onClick={handleLogout}
+              title="Sair"
+            >
+              <LogOut size={15} />
+            </button>
+
+            {/* Avatar */}
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary/60 to-info/60 grid place-items-center text-[11px] font-bold text-primary-foreground">
+              {initials}
+            </div>
           </div>
         </div>
-        <nav className="nav">
-          {NAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-        <div className="side-status">
-          <span>Leads</span>
-          <strong>{boot?.counts?.leads ?? '-'}</strong>
-          <small>3C+ {boot?.threeC?.hasOperatorToken ? 'operador configurado' : 'sem token local'}</small>
-        </div>
-      </aside>
+      </header>
 
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">Fila operacional</span>
-            <h1>{NAV.find((item) => item.id === view)?.label}</h1>
-          </div>
-          <div className="topbar-actions">
-            <span className="session-user">{auth.user?.username || 'BDR'}</span>
-            <button className="icon-button" onClick={toggleDark} title={dark ? 'Modo claro' : 'Modo escuro'}>
-              {dark ? <Sun size={17} /> : <Moon size={17} />}
-            </button>
-            <button className="icon-button" onClick={() => loadShell().catch((error) => setToast(error.message))} title="Atualizar">
-              <RefreshCcw size={18} />
-            </button>
-            <button className="icon-button" onClick={handleLogout} title="Sair">
-              <LogOut size={18} />
-            </button>
-          </div>
-        </header>
-
+      {/* ── Main content ── */}
+      <main className="mx-auto max-w-[1600px] px-5 py-5 flex flex-col gap-4">
         {toast && (
-          <div className="toast">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 text-warning px-4 py-3 text-sm font-medium">
             <span>{toast}</span>
-            <button onClick={() => setToast('')} title="Fechar"><X size={16} /></button>
+            <button
+              onClick={() => setToast('')}
+              className="shrink-0 h-6 w-6 grid place-items-center rounded-md hover:bg-warning/20 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 
@@ -417,18 +450,14 @@ function App() {
 
 function AuthLoading() {
   return (
-    <main className="auth-shell">
-      <section className="login-panel">
-        <div className="brand auth-brand">
-          <div className="brand-mark">C</div>
-          <div>
-            <strong>Cloud BDR</strong>
-            <span>Sales engagement</span>
-          </div>
+    <div className="min-h-screen bg-background grid place-items-center">
+      <div className="flex flex-col items-center gap-4 text-muted-foreground">
+        <div className="relative h-10 w-10 rounded-xl bg-primary/15 border border-primary/40 grid place-items-center">
+          <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
         </div>
-        <div className="auth-state">Carregando sessão...</div>
-      </section>
-    </main>
+        <p className="text-sm">Carregando sessão...</p>
+      </div>
+    </div>
   );
 }
 
@@ -451,39 +480,75 @@ function LoginView({ onLogin, toast, setToast }) {
   }
 
   return (
-    <main className="auth-shell">
-      <section className="login-panel">
-        <div className="brand auth-brand">
-          <div className="brand-mark">C</div>
-          <div>
-            <strong>Cloud BDR</strong>
-            <span>Sales engagement</span>
+    <div className="min-h-screen bg-background grid place-items-center px-4">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="absolute inset-0 grid-bg opacity-20 pointer-events-none" />
+        <div className="absolute -top-20 -right-20 h-48 w-48 rounded-full bg-primary/20 blur-3xl pointer-events-none" />
+
+        <div className="relative p-8 flex flex-col gap-6">
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-primary/15 border border-primary/40 grid place-items-center">
+              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+            </div>
+            <div>
+              <div className="font-semibold text-lg leading-none">
+                cloude<span className="text-primary">·</span>bdr
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">Sales engagement</div>
+            </div>
           </div>
-        </div>
-        <div className="login-title">
-          <ShieldCheck size={22} />
-          <div>
-            <span className="eyebrow">Acesso interno</span>
-            <h1>Login BDR</h1>
+
+          {/* Title */}
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={18} className="text-primary shrink-0" />
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-primary font-semibold">Acesso interno</div>
+              <h1 className="text-2xl font-bold mt-0.5 leading-none">Login BDR</h1>
+            </div>
           </div>
+
+          {/* Form */}
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Usuário</span>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                autoFocus
+                className="w-full rounded-lg border border-border bg-input px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring transition-colors"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Senha</span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                autoComplete="current-password"
+                className="w-full rounded-lg border border-border bg-input px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring transition-colors"
+              />
+            </label>
+
+            {toast && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 text-destructive px-3 py-2 text-sm font-medium">
+                {toast}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={pending}
+              className="flex items-center justify-center gap-2 h-11 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:brightness-110 transition disabled:opacity-50 disabled:cursor-wait glow-primary mt-1"
+            >
+              <Check size={16} />
+              {pending ? 'Entrando...' : 'Entrar'}
+            </button>
+          </form>
         </div>
-        <form className="login-form" onSubmit={submit}>
-          <label className="field">
-            <span>Usuário</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus />
-          </label>
-          <label className="field">
-            <span>Senha</span>
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" />
-          </label>
-          {toast && <div className="auth-error">{toast}</div>}
-          <button className="primary" type="submit" disabled={pending}>
-            <Check size={17} />
-            {pending ? 'Entrando...' : 'Entrar'}
-          </button>
-        </form>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }
 
@@ -520,39 +585,60 @@ function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selecte
       <DailyBriefing dashboard={dashboard} userName="Luciano" />
       <MetricGridNew dashboard={dashboard} />
       <NextTaskHero task={tasks[0]} onExecute={() => onSelectTask(tasks[0]?.id)} />
-      <div className={`workgrid execution-cockpit ${queueCollapsed ? 'queue-collapsed' : ''}`}>
-        <section className={`queue-panel ${queueCollapsed ? 'collapsed' : ''}`}>
-          <div className="section-head queue-head">
-            <div>
-              <span className="eyebrow">Hoje</span>
-              <h2>{queueCollapsed ? 'Fila' : 'Tarefas por bloco'}</h2>
-            </div>
-            <div className="queue-head-actions">
-              <span className="pill">{tasks.length}</span>
-              <button className="icon-button queue-toggle" type="button" onClick={() => setQueueCollapsed((current) => !current)} title={queueCollapsed ? 'Expandir fila' : 'Recolher fila'}>
-                {queueCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: queueCollapsed ? '72px 1fr' : 'minmax(280px,320px) 1fr' }}>
+        {/* ── Queue panel ── */}
+        <section className="rounded-2xl border border-border bg-card overflow-hidden self-start sticky top-20">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            {!queueCollapsed && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-primary font-semibold">Hoje</div>
+                <div className="font-semibold text-sm mt-0.5">Fila de tarefas</div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 ml-auto">
+              {!queueCollapsed && (
+                <span className="rounded-full bg-primary/15 text-primary text-[11px] font-bold px-2 py-0.5">{tasks.length}</span>
+              )}
+              <button
+                type="button"
+                className="h-7 w-7 grid place-items-center rounded-md border border-border bg-surface hover:bg-surface-2 transition-colors text-muted-foreground"
+                onClick={() => setQueueCollapsed((c) => !c)}
+                title={queueCollapsed ? 'Expandir fila' : 'Recolher fila'}
+              >
+                {queueCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
               </button>
             </div>
           </div>
+
+          {/* Body */}
           {queueCollapsed ? (
-            <div className="queue-mini">
+            <div className="flex flex-col gap-1.5 p-2">
               {queueSummary.map(([key, label, count]) => (
-                <button key={key} type="button" onClick={() => setQueueCollapsed(false)}>
-                  <strong>{count}</strong>
-                  <span>{label}</span>
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setQueueCollapsed(false)}
+                  className="flex flex-col items-center justify-center gap-0.5 rounded-lg border border-border bg-surface hover:bg-surface-2 transition-colors py-2.5"
+                >
+                  <strong className="text-primary text-base font-bold font-mono">{count}</strong>
+                  <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</span>
                 </button>
               ))}
             </div>
           ) : (
-            <>
-              <TaskGroup title="Enriquecer" tasks={grouped.ENRICHMENT} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
-              <TaskGroup title="Ligar" tasks={grouped.CALL} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
-              <TaskGroup title="Mensagens" tasks={grouped.MESSAGE} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
-              <TaskGroup title="Follow-ups e reuniões" tasks={grouped.FOLLOW} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
-              <TaskGroup title="Closer" tasks={grouped.CLOSER} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
-            </>
+            <div className="max-h-[calc(100vh-200px)] overflow-y-auto">
+              <TaskGroup title="Enriquecer"           tasks={grouped.ENRICHMENT} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Ligar"                tasks={grouped.CALL}       selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Mensagens"            tasks={grouped.MESSAGE}    selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Follow-ups e reuniões" tasks={grouped.FOLLOW}   selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+              <TaskGroup title="Closer"               tasks={grouped.CLOSER}    selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} />
+            </div>
           )}
         </section>
+
+        {/* ── Workbench ── */}
         <TaskWorkbench
           data={selectedTaskData}
           loading={loading}
@@ -569,51 +655,71 @@ function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selecte
 
 function MetricGrid({ dashboard }) {
   const metrics = [
-    ['Leads', dashboard?.leads],
-    ['Abertas', dashboard?.openTasks],
-    ['Hoje', dashboard?.dueToday],
-    ['Atrasadas', dashboard?.overdue],
-    ['Ligações feitas', dashboard?.callsDoneToday],
-    ['Significativas', dashboard?.significantCallsToday],
-    ['Não significativas', dashboard?.nonSignificantCallsToday],
-    ['Reuniões', dashboard?.meetings]
+    ['Leads', dashboard?.leads, 'border-border'],
+    ['Abertas', dashboard?.openTasks, 'border-border'],
+    ['Hoje', dashboard?.dueToday, 'border-info/30'],
+    ['Atrasadas', dashboard?.overdue, 'border-hot/30 bg-hot/5'],
+    ['Ligações feitas', dashboard?.callsDoneToday, 'border-border'],
+    ['Significativas', dashboard?.significantCallsToday, 'border-success/30'],
+    ['Não significativas', dashboard?.nonSignificantCallsToday, 'border-border'],
+    ['Reuniões', dashboard?.meetings, 'border-primary/30 bg-primary/5'],
   ];
   return (
-    <div className="metrics">
-      {metrics.map(([label, value]) => (
-        <div className="metric" key={label}>
-          <span>{label}</span>
-          <strong>{value ?? '-'}</strong>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {metrics.map(([label, value, accent]) => (
+        <div key={label} className={`rounded-xl border ${accent} bg-card p-4`}>
+          <div className="text-xs text-muted-foreground">{label}</div>
+          <div className="font-mono text-2xl font-semibold mt-1">{value ?? '-'}</div>
         </div>
       ))}
     </div>
   );
 }
 
+const TASK_BADGE_COLORS = {
+  CALL:                 'bg-info/10 text-info border-info/20',
+  WHATSAPP:             'bg-success/10 text-success border-success/20',
+  EMAIL:                'bg-primary/10 text-primary border-primary/20',
+  LINKEDIN:             'bg-info/10 text-info border-info/20',
+  FOLLOW_UP:            'bg-warning/10 text-warning border-warning/20',
+  MEETING_CONFIRMATION: 'bg-success/10 text-success border-success/20',
+  CLOSER_FOLLOW_UP:     'bg-success/10 text-success border-success/20',
+  ENRICHMENT:           'bg-surface-2 text-muted-foreground border-border',
+};
+
 function TaskGroup({ title, tasks, selectedTaskId, onSelectTask }) {
   return (
-    <div className="task-group">
-      <div className="task-group-title">
-        <span>{title}</span>
-        <small>{tasks.length}</small>
+    <div className="border-t border-border first:border-t-0 pt-1 mt-1 first:pt-0 first:mt-0">
+      <div className="flex items-center justify-between px-3 py-2">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">{title}</span>
+        <span className="text-[10px] font-mono text-primary font-bold">{tasks.length}</span>
       </div>
-      {tasks.slice(0, 10).map((task) => (
-        <button
-          key={task.id}
-          className={`task-row ${selectedTaskId === task.id ? 'selected' : ''}`}
-          onClick={() => onSelectTask(task.id)}
-        >
-          <div>
-            <strong>{companyNameFromTask(task)}</strong>
-            <span>
-              <span className={`task-badge task-badge-${task.type}`}>{TYPE_LABEL[task.type]}</span>
-              {' '}{task.title}
-            </span>
-          </div>
-          <time>{formatDate(task.due_at)}</time>
-        </button>
-      ))}
-      {!tasks.length && <p className="empty-line">Sem tarefas nesse bloco.</p>}
+      {tasks.slice(0, 10).map((task) => {
+        const selected = selectedTaskId === task.id;
+        return (
+          <button
+            key={task.id}
+            className={`group w-full text-left flex items-start justify-between gap-2 px-3 py-2.5 transition-colors ${
+              selected
+                ? 'bg-primary/10 border-l-2 border-primary'
+                : 'hover:bg-surface border-l-2 border-transparent'
+            }`}
+            onClick={() => onSelectTask(task.id)}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-sm truncate">{companyNameFromTask(task)}</div>
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${TASK_BADGE_COLORS[task.type] || TASK_BADGE_COLORS.ENRICHMENT}`}>
+                  {TYPE_LABEL[task.type]}
+                </span>
+                <span className="text-[11px] text-muted-foreground truncate">{task.title}</span>
+              </div>
+            </div>
+            <time className="text-[10px] text-warning font-mono shrink-0 mt-0.5">{formatDate(task.due_at)}</time>
+          </button>
+        );
+      })}
+      {!tasks.length && <p className="px-3 py-2 text-xs text-muted-foreground italic">Sem tarefas nesse bloco.</p>}
     </div>
   );
 }
@@ -1512,32 +1618,55 @@ function Textarea({ label, value, onChange, wide = false }) {
   );
 }
 
+function TaskListPanel({ title, eyebrow, items, onSelectTask, setView, emptyText }) {
+  return (
+    <section className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div>
+          {eyebrow && <div className="text-[10px] uppercase tracking-widest text-primary font-semibold mb-0.5">{eyebrow}</div>}
+          <h2 className="font-semibold">{title}</h2>
+        </div>
+        <span className="rounded-full bg-primary/15 text-primary text-xs font-bold px-2.5 py-1">{items.length}</span>
+      </div>
+      <div className="divide-y divide-border">
+        {items.map((task) => (
+          <button
+            key={task.id}
+            className="group w-full flex items-center gap-3 px-5 py-3.5 hover:bg-surface/60 transition-colors text-left"
+            onClick={() => { onSelectTask(task.id); setView('execution'); }}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate">{companyNameFromTask(task)}</div>
+              <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                {TYPE_LABEL[task.type]} · {task.title}
+                {task.due_at && <span className="ml-2 font-mono text-warning">{formatDate(task.due_at)}</span>}
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+          </button>
+        ))}
+        {!items.length && (
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground italic">{emptyText || 'Sem itens.'}</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function QueueView({ type, onSelectTask, setView, setToast }) {
   const [items, setItems] = useState([]);
   useEffect(() => {
     api(`/api/tasks/queue/${type}`).then(setItems).catch((error) => setToast(error.message));
   }, [type]);
   return (
-    <section className="panel">
-      <div className="section-head">
-        <div>
-          <span className="eyebrow">Fila</span>
-          <h2>{TYPE_LABEL[type]}</h2>
-        </div>
-        <span className="pill">{items.length} abertas</span>
-      </div>
-      <div className="list-grid">
-        {items.map((task) => (
-          <button key={task.id} className="lead-list-row" onClick={() => { onSelectTask(task.id); setView('execution'); }}>
-            <div>
-              <strong>{companyNameFromTask(task)}</strong>
-              <span>{task.title} · {formatDate(task.due_at)}</span>
-            </div>
-            <ChevronRight size={18} />
-          </button>
-        ))}
-      </div>
-    </section>
+    <TaskListPanel
+      title={TYPE_LABEL[type]}
+      eyebrow="Fila"
+      items={items}
+      onSelectTask={onSelectTask}
+      setView={setView}
+      emptyText="Sem tarefas nessa fila."
+    />
   );
 }
 
@@ -1552,23 +1681,14 @@ function AgendaView({ onSelectTask, setView, setToast }) {
       .catch((error) => setToast(error.message));
   }, []);
   return (
-    <section className="panel">
-      <div className="section-head">
-        <h2>Agenda operacional</h2>
-        <span className="pill">{items.length} compromissos</span>
-      </div>
-      <div className="list-grid">
-        {items.map((task) => (
-          <button key={task.id} className="lead-list-row" onClick={() => { onSelectTask(task.id); setView('execution'); }}>
-            <div>
-              <strong>{formatDate(task.due_at)} · {companyNameFromTask(task)}</strong>
-              <span>{TYPE_LABEL[task.type]} · {task.title}</span>
-            </div>
-            <ChevronRight size={18} />
-          </button>
-        ))}
-      </div>
-    </section>
+    <TaskListPanel
+      title="Agenda operacional"
+      eyebrow="Compromissos"
+      items={items}
+      onSelectTask={onSelectTask}
+      setView={setView}
+      emptyText="Sem compromissos pendentes."
+    />
   );
 }
 
@@ -1701,23 +1821,44 @@ function LeadSearchView({ setToast }) {
   }, []);
 
   return (
-    <div className="two-col">
-      <section className="panel">
-        <div className="searchbar">
-          <Search size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar empresa ou CNPJ" />
-          <button onClick={() => search()}>Buscar</button>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+      <section className="rounded-2xl border border-border bg-card overflow-hidden">
+        {/* Search bar */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+          <Search size={15} className="text-muted-foreground shrink-0" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && search()}
+            placeholder="Buscar empresa ou CNPJ"
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+          />
+          <button
+            onClick={() => search()}
+            className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition"
+          >
+            Buscar
+          </button>
         </div>
-        <div className="list-grid">
+        <div className="divide-y divide-border">
           {leads.map((lead) => (
-            <button key={lead.id} className="lead-list-row" onClick={() => openLead(lead.id)}>
-              <div>
-                <strong>{companyNameFromLead(lead)}</strong>
-                <span>{lead.cnpj} · {lead.state} · {lead.open_tasks} tarefas abertas</span>
+            <button
+              key={lead.id}
+              className="group w-full flex items-center gap-3 px-4 py-3.5 hover:bg-surface/60 transition-colors text-left"
+              onClick={() => openLead(lead.id)}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{companyNameFromLead(lead)}</div>
+                <div className="text-xs text-muted-foreground mt-0.5 font-mono truncate">
+                  {lead.cnpj} · {lead.state} · {lead.open_tasks} abertas
+                </div>
               </div>
-              <ChevronRight size={18} />
+              <ChevronRight size={15} className="text-muted-foreground group-hover:text-foreground shrink-0" />
             </button>
           ))}
+          {!leads.length && (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground italic">Nenhum lead encontrado.</div>
+          )}
         </div>
       </section>
       <LeadDetail lead={selected} setToast={setToast} />
@@ -1728,30 +1869,36 @@ function LeadSearchView({ setToast }) {
 function LeadDetail({ lead, setToast }) {
   if (!lead) {
     return (
-      <section className="panel empty-state">
-        <Search size={28} />
-        <h2>Lead 360</h2>
-        <p>Abra uma empresa para ver contatos, telefones, tarefas e histórico.</p>
+      <section className="rounded-2xl border border-border bg-card flex flex-col items-center justify-center gap-3 p-12 text-muted-foreground min-h-48">
+        <Search size={28} className="opacity-40" />
+        <div className="text-center">
+          <div className="font-semibold">Lead 360</div>
+          <div className="text-sm mt-1">Abra uma empresa para ver contatos, telefones e histórico.</div>
+        </div>
       </section>
     );
   }
   return (
-    <section className="panel">
-      <div className="section-head">
+    <section className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
         <div>
-          <span className="eyebrow">{lead.state}</span>
-          <h2>{companyNameFromLead(lead)}</h2>
+          <div className="text-[10px] uppercase tracking-widest text-primary font-semibold">{lead.state}</div>
+          <h2 className="font-semibold mt-0.5">{companyNameFromLead(lead)}</h2>
         </div>
-        <span className="pill">{lead.openTasks?.length || 0} tarefas</span>
+        <span className="rounded-full bg-primary/15 text-primary text-xs font-bold px-2.5 py-1">
+          {lead.openTasks?.length || 0} tarefas
+        </span>
       </div>
-      <div className="info-grid">
-        <Info label="CNPJ" value={lead.cnpj} />
-        <Info label="Cidade" value={lead.city} />
-        <Info label="CNAE" value={lead.cnae} />
-        <Info label="Cadência" value={lead.current_cadence_step ? `Step ${lead.current_cadence_step}` : 'Não iniciada'} />
+      <div className="p-5 flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Info label="CNPJ" value={lead.cnpj} />
+          <Info label="Cidade" value={lead.city} />
+          <Info label="CNAE" value={lead.cnae} />
+          <Info label="Cadência" value={lead.current_cadence_step ? `Step ${lead.current_cadence_step}` : 'Não iniciada'} />
+        </div>
+        <LeadDataPanel lead={lead} selectedPhone={lead.phones?.[0]?.phone} setToast={setToast} />
+        <LeadTimeline lead={lead} />
       </div>
-      <LeadDataPanel lead={lead} selectedPhone={lead.phones?.[0]?.phone} setToast={setToast} />
-      <LeadTimeline lead={lead} />
     </section>
   );
 }
@@ -1769,20 +1916,22 @@ function DashboardView({ dashboard, closerDashboard }) {
   return (
     <>
       <MetricGrid dashboard={dashboard} />
-      <div className="two-col">
-        <section className="panel">
-          <h2>Resultados BDR</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section className="rounded-2xl border border-border bg-card p-5">
+          <h2 className="font-semibold mb-4">Resultados BDR</h2>
           <BarRows rows={dashboard?.byType || []} labelKey="type" valueKey="total" />
         </section>
-        <section className="panel">
-          <h2>Tabulações</h2>
+        <section className="rounded-2xl border border-border bg-card p-5">
+          <h2 className="font-semibold mb-4">Tabulações</h2>
           <BarRows rows={dashboard?.outcomes || []} labelKey="outcome" valueKey="total" />
         </section>
       </div>
-      <section className="panel">
-        <div className="section-head">
-          <h2>Closer</h2>
-          <span className="pill">R$ {Number(closerDashboard?.proposalValue || 0).toLocaleString('pt-BR')}</span>
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold">Closer</h2>
+          <span className="rounded-full bg-primary/15 text-primary text-xs font-bold px-2.5 py-1 font-mono">
+            R$ {Number(closerDashboard?.proposalValue || 0).toLocaleString('pt-BR')}
+          </span>
         </div>
         <BarRows rows={closerDashboard?.byStage || []} labelKey="stage" valueKey="total" />
       </section>
@@ -1793,14 +1942,22 @@ function DashboardView({ dashboard, closerDashboard }) {
 function BarRows({ rows, labelKey, valueKey }) {
   const max = Math.max(...rows.map((row) => Number(row[valueKey] || 0)), 1);
   return (
-    <div className="barrows">
-      {rows.map((row) => (
-        <div className="barrow" key={row[labelKey] || 'sem-status'}>
-          <span>{TYPE_LABEL[row[labelKey]] || STAGE_LABEL[row[labelKey]] || row[labelKey] || 'Sem status'}</span>
-          <div><i style={{ width: `${(Number(row[valueKey] || 0) / max) * 100}%` }} /></div>
-          <strong>{row[valueKey]}</strong>
-        </div>
-      ))}
+    <div className="flex flex-col gap-2.5">
+      {rows.map((row) => {
+        const pct = (Number(row[valueKey] || 0) / max) * 100;
+        return (
+          <div key={row[labelKey] || 'sem-status'} className="grid items-center gap-3" style={{ gridTemplateColumns: '160px 1fr 36px' }}>
+            <span className="text-sm text-muted-foreground truncate">
+              {TYPE_LABEL[row[labelKey]] || STAGE_LABEL[row[labelKey]] || row[labelKey] || 'Sem status'}
+            </span>
+            <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+            </div>
+            <strong className="font-mono text-sm text-right">{row[valueKey]}</strong>
+          </div>
+        );
+      })}
+      {!rows.length && <p className="text-sm text-muted-foreground italic py-2">Sem dados.</p>}
     </div>
   );
 }

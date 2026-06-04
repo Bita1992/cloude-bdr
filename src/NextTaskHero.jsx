@@ -1,96 +1,81 @@
-/* NextTaskHero — o item mais importante da tela.
-   Mostra a próxima tarefa com empresa, tipo, horário e botão de execução.
-   Recebe `task` (objeto) e `onExecute` (callback). */
+import { Phone, Mail, MessageSquare, Linkedin, RefreshCcw, Calendar, ChevronRight, Flame } from 'lucide-react';
 
-const TYPE_LABELS = {
-  CALL:                   { label: 'LIGAÇÃO',        color: 'blue'   },
-  WHATSAPP:               { label: 'WHATSAPP',       color: 'green'  },
-  EMAIL:                  { label: 'E-MAIL',         color: 'indigo' },
-  LINKEDIN:               { label: 'LINKEDIN',       color: 'indigo' },
-  FOLLOW_UP:              { label: 'FOLLOW-UP',      color: 'amber'  },
-  MEETING_CONFIRMATION:   { label: 'CONFIRMAÇÃO',    color: 'indigo' },
-  CLOSER_FOLLOW_UP:       { label: 'FOLLOW-UP+',     color: 'green'  },
-  ENRICHMENT:             { label: 'ENRICHMENT',     color: 'muted'  },
+const TYPE_META = {
+  CALL:                { label: 'Ligação',       icon: Phone,         accent: 'text-info' },
+  WHATSAPP:            { label: 'WhatsApp',      icon: MessageSquare, accent: 'text-success' },
+  EMAIL:               { label: 'E-mail',        icon: Mail,          accent: 'text-primary' },
+  LINKEDIN:            { label: 'LinkedIn',      icon: Linkedin,      accent: 'text-info' },
+  FOLLOW_UP:           { label: 'Follow-up',     icon: RefreshCcw,    accent: 'text-warning' },
+  MEETING_CONFIRMATION:{ label: 'Confirmação',   icon: Calendar,      accent: 'text-success' },
+  CLOSER_FOLLOW_UP:    { label: 'Closer',        icon: ChevronRight,  accent: 'text-success' },
+  ENRICHMENT:          { label: 'Enriquecimento', icon: null,          accent: 'text-muted-foreground' },
 };
 
-function formatTime(isoString) {
-  if (!isoString) return null;
-  try {
-    const d = new Date(isoString);
-    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return null;
-  }
+function fmt(iso) {
+  if (!iso) return null;
+  try { return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
+  catch { return null; }
 }
 
 export function NextTaskHero({ task, onExecute }) {
   if (!task) {
     return (
-      <div className="next-task-hero next-task-hero--empty" aria-label="Nenhuma tarefa pendente">
-        <span className="next-task-empty-icon" aria-hidden="true">✓</span>
-        <strong className="next-task-empty-title">Tudo limpo por agora</strong>
-        <p className="next-task-empty-sub">Sem tarefas pendentes na fila.</p>
+      <div className="rounded-2xl border border-border bg-card p-6 flex items-center justify-center gap-3 text-muted-foreground">
+        <span className="text-2xl">✓</span>
+        <div>
+          <div className="font-semibold">Tudo limpo por agora</div>
+          <div className="text-sm">Sem tarefas pendentes na fila.</div>
+        </div>
       </div>
     );
   }
 
-  const typeKey    = task.type ?? 'CALL';
-  const typeInfo   = TYPE_LABELS[typeKey] ?? { label: typeKey, color: 'blue' };
-  const company    = task.company ?? task.leadName ?? 'Lead';
-  const contact    = task.contactName ?? null;
-  const time       = formatTime(task.scheduledAt ?? task.dueAt ?? null);
-  const isOverdue  = task.isOverdue ?? false;
-  const isUrgent   = task.priority === 'HIGH' || isOverdue;
+  const meta    = TYPE_META[task.type] ?? TYPE_META.CALL;
+  const Icon    = meta.icon ?? Phone;
+  const company = task.trade_name ?? task.legal_name ?? task.company ?? 'Lead';
+  const title   = task.title ?? '';
+  const time    = fmt(task.due_at ?? task.scheduledAt ?? null);
+  const isOverdue = task.isOverdue ?? false;
 
   return (
-    <div
-      className={`next-task-hero${isUrgent ? ' next-task-hero--urgent' : ''}`}
-      role="region"
-      aria-label="Próxima tarefa"
-    >
-      {/* Accent bar */}
-      <div className="next-task-accent" aria-hidden="true" />
+    <div className="rounded-2xl border border-primary/40 bg-gradient-to-br from-primary/8 via-card to-card p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-5 glow-primary">
+      {/* Icon */}
+      <div className={`h-13 w-13 rounded-xl bg-primary/15 border border-primary/30 grid place-items-center shrink-0 ${meta.accent}`}>
+        <Icon size={24} />
+      </div>
 
-      {/* Content */}
-      <div className="next-task-content">
-
-        {/* Header row */}
-        <div className="next-task-header">
-          <span className="next-task-eyebrow">PRÓXIMA TAREFA</span>
-          {isUrgent && (
-            <span className="next-task-urgent-badge" aria-label="Urgente">
-              {isOverdue ? '⚠ ATRASADA' : '🔥 URGENTE'}
-            </span>
-          )}
-          {time && (
-            <time className="next-task-time" dateTime={task.scheduledAt ?? task.dueAt}>
-              {time}
-            </time>
-          )}
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-primary font-semibold flex items-center gap-2">
+          Próxima ação
+          {isOverdue && <span className="text-hot">· ATRASADA</span>}
+          {time && <span className="text-muted-foreground font-mono normal-case tracking-normal">· {time}</span>}
         </div>
-
-        {/* Main info */}
-        <div className="next-task-main">
-          <div className="next-task-info">
-            <span className={`next-task-type-badge next-task-type-badge--${typeInfo.color}`}>
-              {typeInfo.label}
-            </span>
-            <strong className="next-task-company">{company}</strong>
-            {contact && (
-              <span className="next-task-contact">{contact}</span>
-            )}
+        <div className="mt-1 text-lg font-semibold truncate">{meta.label} · {company}</div>
+        {title && (
+          <div className="mt-0.5 text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
+            <Flame size={13} className="text-hot shrink-0" />
+            <span>{title}</span>
           </div>
+        )}
+      </div>
 
-          <button
-            className="next-task-execute-btn"
-            onClick={() => onExecute?.(task)}
-            type="button"
-            aria-label={`Executar tarefa: ${typeInfo.label} para ${company}`}
-          >
-            Executar →
-          </button>
-        </div>
-
+      {/* Actions */}
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          className="h-9 px-4 rounded-md border border-border bg-surface text-sm hover:bg-surface-2 transition-colors"
+          onClick={() => {}}
+        >
+          Pular
+        </button>
+        <button
+          type="button"
+          className="h-9 px-5 rounded-md bg-primary text-primary-foreground font-semibold text-sm flex items-center gap-1.5 hover:brightness-110 transition"
+          onClick={() => onExecute?.(task)}
+        >
+          Executar <ChevronRight size={15} />
+        </button>
       </div>
     </div>
   );
