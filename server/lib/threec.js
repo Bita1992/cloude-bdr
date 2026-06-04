@@ -44,7 +44,7 @@ export async function fetchThreeCCalls(startDate, endDate, limit = 300) {
 
 config();
 
-const DEFAULT_BASE_URL = 'https://cloudesignmarketing.3c.plus/api/v1';
+const DEFAULT_BASE_URL = 'https://sua-conta.3c.plus/api/v1';
 
 export function threeCConfig() {
   return {
