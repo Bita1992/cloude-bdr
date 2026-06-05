@@ -1602,6 +1602,197 @@ setInterval(() => {
   syncFromThreeCApi().catch((err) => console.error('[3c-sync]', err.message));
 }, 5 * 60 * 1000);
 
+// ─────────────────────────────────────────────────────────────
+// GET /api/daily-report  — Relatório Diário do BDR
+// ─────────────────────────────────────────────────────────────
+app.get('/api/daily-report', (req, res) => {
+  try {
+    const day  = req.query.date || new Date().toISOString().slice(0, 10);
+    const like = `${day}%`;
+
+    const MEETING_GOAL = Number(process.env.BDR_MEETINGS_GOAL || 2);
+
+    const CLASS = {
+      answered:      ['connected', 'meeting', 'follow', 'whatsapp'],
+      qualified:     ['meeting', 'follow', 'whatsapp'],
+      meeting:       ['meeting'],
+      material:      ['whatsapp'],
+      callback:      ['follow'],
+      notInterested: ['not_interested'],
+      outOfIcp:      ['out_of_icp'],
+      wrongPhone:    ['phone_no_link', 'phone_invalid'],
+    };
+
+    function countCalls(dayLike, classes) {
+      if (!classes) return db.prepare('SELECT COUNT(*) n FROM calls WHERE started_at LIKE ?').get(dayLike).n;
+      const ph = classes.map(() => '?').join(',');
+      return db.prepare(`SELECT COUNT(*) n FROM calls WHERE started_at LIKE ? AND classification IN (${ph})`).get(dayLike, ...classes).n;
+    }
+
+    const pct  = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
+    const rate = (a, b) => `${pct(a, b)}%`;
+    const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+
+    function dayLabel(iso) {
+      if (!iso) return '';
+      const a = new Date(iso); a.setHours(0, 0, 0, 0);
+      const b = new Date();    b.setHours(0, 0, 0, 0);
+      const diff = Math.round((a - b) / 86400000);
+      const wd = new Date(iso).toLocaleDateString('pt-BR', { weekday: 'short' });
+      if (diff === 0) return `hoje, ${wd}`;
+      if (diff === 1) return `amanhã, ${wd}`;
+      return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    }
+
+    const firstName = (n) => (n || '').split(' ')[0] || 'tudo bem';
+    const confirmMsg = (r) =>
+      `Olá, ${firstName(r.contact)}! Confirmando nossa conversa de ${dayLabel(r.due_at)} às ${fmtTime(r.due_at)} sobre dar previsibilidade à geração de oportunidades da ${r.company}. Te envio o link uns 10 min antes. Combinado? 👊`;
+    const followMsg = (r) =>
+      `${firstName(r.contact)}, é da Cloud — retomando nosso contato. Acho que dá pra deixar a geração de oportunidades da ${r.company} bem mais constante. Você tem 15 min pra eu te mostrar como?`;
+
+    const callsMade = countCalls(like);
+    const answered  = countCalls(like, CLASS.answered);
+    const qualified = countCalls(like, CLASS.qualified);
+    const meeting   = countCalls(like, CLASS.meeting);
+
+    const yest = new Date(day); yest.setDate(yest.getDate() - 1);
+    const meetingsYesterday = countCalls(`${yest.toISOString().slice(0, 10)}%`, CLASS.meeting);
+
+    // Confirmar reuniões
+    const confirmations = db.prepare(`
+      SELECT t.id, t.lead_id AS leadId, t.due_at,
+             COALESCE(c.trade_name, c.legal_name) AS company,
+             ct.name AS contact, ct.role AS role
+        FROM tasks t
+        JOIN leads l     ON l.id = t.lead_id
+        JOIN companies c ON c.id = l.company_id
+        LEFT JOIN contacts ct ON ct.company_id = c.id AND ct.is_primary = 1
+       WHERE t.type = 'MEETING_CONFIRMATION' AND t.status = 'OPEN'
+       ORDER BY t.due_at ASC
+    `).all().map((r) => ({
+      id: String(r.id), leadId: r.leadId, company: r.company || '—',
+      contact: r.contact || 'Decisor', role: r.role || '',
+      time: fmtTime(r.due_at), dayLabel: dayLabel(r.due_at),
+      tags: [{ label: 'Fit alto', tone: 'fit' }],
+      channel: 'WhatsApp de confirmação',
+      message: confirmMsg(r),
+      doneMsg: 'Reunião confirmada. 🔒',
+    }));
+
+    // Follow-ups e retornos do dia
+    const followups = db.prepare(`
+      SELECT t.id, t.lead_id AS leadId, t.due_at,
+             COALESCE(c.trade_name, c.legal_name) AS company,
+             ct.name AS contact, ct.role AS role
+        FROM tasks t
+        JOIN leads l     ON l.id = t.lead_id
+        JOIN companies c ON c.id = l.company_id
+        LEFT JOIN contacts ct ON ct.company_id = c.id AND ct.is_primary = 1
+       WHERE t.status = 'OPEN'
+         AND t.type IN ('FOLLOW_UP', 'WHATSAPP', 'CALL')
+         AND t.due_at <= ?
+       ORDER BY t.due_at ASC
+       LIMIT 8
+    `).all(`${day}T23:59:59`).map((r) => {
+      const overdue = new Date(r.due_at) < new Date(`${day}T00:00:00`);
+      return {
+        id: String(r.id), leadId: r.leadId, company: r.company || '—',
+        contact: r.contact || 'Decisor', role: r.role || '',
+        when: { label: overdue ? 'atrasado' : 'hoje', tone: overdue ? 'hot' : 'normal', sub: fmtTime(r.due_at) || '—' },
+        tags: [{ label: overdue ? 'Atrasado' : 'Para hoje', tone: overdue ? 'hot' : 'mut' }],
+        channel: 'WhatsApp pra reabrir',
+        message: followMsg(r),
+        snoozeLabel: 'Adiar p/ amanhã',
+        primaryLabel: 'Enviar e marcar próxima ação',
+        doneMsg: 'Boa. De volta no radar. 💬',
+      };
+    });
+
+    // Cleanup: leads com outcomes negativos concluídos hoje
+    const CLEANUP_META = {
+      not_interested: { title: 'Sem interesse', reason: 'Decisor pediu pra não ligar → bloqueio definitivo', actionLabel: 'Bloquear todos', doneMsg: 'Leads bloqueados.' },
+      out_of_icp:     { title: 'Fora do ICP',   reason: 'Operação pequena / B2C → descartar da campanha',  actionLabel: 'Descartar',       doneMsg: 'Leads descartados.' },
+      phone_invalid:  { title: 'Telefone errado', reason: 'Número não pertence à empresa → higienização',   actionLabel: 'Higienizar',      doneMsg: 'Enviados p/ higienização.' },
+      phone_no_link:  { title: 'Sem vínculo',    reason: 'Telefone sem relação com a empresa → revisar',    actionLabel: 'Revisar',         doneMsg: 'Marcados p/ revisão.' },
+    };
+    const cleanup = db.prepare(`
+      SELECT outcome, COUNT(DISTINCT lead_id) n
+        FROM tasks
+       WHERE outcome IN ('not_interested','out_of_icp','phone_invalid','phone_no_link')
+         AND status = 'DONE'
+         AND completed_at LIKE ?
+       GROUP BY outcome
+       HAVING n > 0
+    `).all(like).map((r) => {
+      const m = CLEANUP_META[r.outcome] || { title: r.outcome, reason: '', actionLabel: 'Remover', doneMsg: 'Removidos.' };
+      return { id: `clean-${r.outcome}`, title: `${r.n} leads · ${m.title}`, reason: m.reason, count: r.n, snoozeLabel: 'Revisar depois', actionLabel: m.actionLabel, doneMsg: m.doneMsg };
+    });
+
+    const top = followups[0];
+    const nextBestAction = top ? {
+      leadId: top.leadId,
+      headline: `Ligue agora para a ${top.company} — ${top.contact}`,
+      why: 'É o follow-up mais quente da sua fila agora. Fechar essa conversa aumenta sua chance de bater a meta de reuniões.',
+      reasons: [
+        { icon: 'clock', label: 'Janela quente' },
+        { icon: 'award', label: 'Fit alto' },
+        { icon: 'trend', label: top.when.label === 'atrasado' ? 'Retorno atrasado' : 'Para hoje' },
+      ],
+      callLabel: 'Ligar agora', skipLabel: 'Hoje chega, pular',
+    } : null;
+
+    const bestNiche = db.prepare(`
+      SELECT c.cnae AS niche, COUNT(*) n
+        FROM calls k
+        JOIN leads l  ON l.id = k.lead_id
+        JOIN companies c ON c.id = l.company_id
+       WHERE k.started_at LIKE ? AND k.classification = 'meeting' AND c.cnae IS NOT NULL
+       GROUP BY c.cnae
+       ORDER BY n DESC
+       LIMIT 1
+    `).get(like);
+
+    res.json({
+      date: day,
+      weekdayLabel: new Date(`${day}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' }),
+      now: fmtTime(new Date().toISOString()),
+      user: { firstName: process.env.BDR_NAME || 'BDR', initials: 'BR', role: 'BDR · Outbound' },
+      campaign: process.env.BDR_CAMPAIGN || 'Outbound',
+      summary: { meetingsBooked: meeting, meetingsGoal: MEETING_GOAL, meetingsYesterday, callsMade },
+      funnel: [
+        { key: 'calls',         label: 'Ligações',             value: callsMade, pct: 100 },
+        { key: 'answered',      label: 'Atenderam',            value: answered,  pct: pct(answered, callsMade),  rate: rate(answered, callsMade),  rateLabel: 'conexão' },
+        { key: 'decisionMaker', label: 'Decisor localizado',   value: answered,  pct: pct(answered, callsMade),  rate: rate(answered, answered),   rateLabel: 'dos atendimentos' },
+        { key: 'qualified',     label: 'Conversa qualificada', value: qualified, pct: pct(qualified, callsMade), rate: rate(qualified, answered),   rateLabel: 'com fit' },
+        { key: 'meeting',       label: 'Reunião agendada',     value: meeting,   pct: pct(meeting, callsMade),   rate: rate(meeting, qualified),    rateLabel: 'da conversa pra agenda', isKey: true },
+      ],
+      quality: [
+        { key: 'material',      label: 'Pediram material', value: countCalls(like, CLASS.material),      tone: 'info' },
+        { key: 'callback',      label: 'Retornar depois',  value: countCalls(like, CLASS.callback),      tone: 'warn' },
+        { key: 'fit',           label: 'Com fit',          value: qualified,                              tone: 'good' },
+        { key: 'notInterested', label: 'Sem interesse',    value: countCalls(like, CLASS.notInterested), tone: 'bad' },
+        { key: 'outOfIcp',      label: 'Sem fit',          value: countCalls(like, CLASS.outOfIcp),      tone: 'mut' },
+        { key: 'wrongPhone',    label: 'Telefone errado',  value: countCalls(like, CLASS.wrongPhone),    tone: 'violet' },
+      ],
+      confirmations, followups, cleanup, nextBestAction,
+      insights: [
+        { key: 'Melhor nicho do dia', icon: 'target', value: bestNiche?.niche || '—', note: bestNiche ? `${bestNiche.n} reuni${bestNiche.n > 1 ? 'ões' : 'ão'} vieram daqui. Vale começar amanhã por ele.` : 'Sem reuniões registradas hoje.', highlight: true },
+        { key: 'Abertura que mais converteu', icon: 'chat',  value: '"Falo rápido…"',          note: 'Versão curta e direta puxou mais continuidade. (evoluir com A/B de script)' },
+        { key: 'Objeção mais comum',          icon: 'x',     value: '"Manda apresentação"',    note: 'Lembra: nunca mande genérico — devolve com a pergunta de qualificação.' },
+        { key: 'Dor que mais apareceu',       icon: 'award', value: 'Dependência de indicação', note: 'O gancho de "previsibilidade" ressoa em quase toda conversa qualificada.' },
+      ],
+      tomorrow: [
+        { n: String(confirmations.length || 0), label: 'reuniões pra conduzir', highlight: true },
+        { n: String(followups.length || 0),     label: 'follow-ups quentes' },
+        { n: '☀', label: bestNiche?.niche ? `começa por ${bestNiche.niche}` : 'comece pelo melhor nicho' },
+      ],
+    });
+  } catch (err) {
+    console.error('[daily-report]', err);
+    res.status(500).json({ error: 'daily-report failed', detail: err.message });
+  }
+});
+
 app.post('/api/import/csv', asyncRoute(async (req, res) => {
   const dir = process.env.CSV_IMPORT_DIR;
   if (!dir) return res.status(400).json({ error: 'CSV_IMPORT_DIR não configurado no .env' });

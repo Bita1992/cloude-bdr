@@ -1,0 +1,72 @@
+export const MOCK_DAILY_REPORT = {
+  date: '2026-06-05',
+  weekdayLabel: 'quinta-feira, 05 de junho',
+  now: '14:30',
+  user: { firstName: 'Luciano', initials: 'LY', role: 'BDR · Outbound' },
+  campaign: 'Campanha Junho 20 nichos',
+  summary: { meetingsBooked: 2, meetingsGoal: 2, meetingsYesterday: 1, callsMade: 47 },
+  funnel: [
+    { key: 'calls',         label: 'Ligações',             value: 47, pct: 100 },
+    { key: 'answered',      label: 'Atenderam',            value: 14, pct: 30,  rate: '30%', rateLabel: 'conexão' },
+    { key: 'decisionMaker', label: 'Decisor localizado',   value: 10, pct: 21,  rate: '71%', rateLabel: 'dos atendimentos' },
+    { key: 'qualified',     label: 'Conversa qualificada', value: 5,  pct: 11,  rate: '50%', rateLabel: 'com fit' },
+    { key: 'meeting',       label: 'Reunião agendada',     value: 2,  pct: 4,   rate: '40%', rateLabel: 'da conversa pra agenda', isKey: true },
+  ],
+  quality: [
+    { key: 'material',      label: 'Pediram material', value: 2, tone: 'info' },
+    { key: 'callback',      label: 'Retornar depois',  value: 5, tone: 'warn' },
+    { key: 'fit',           label: 'Com fit',          value: 5, tone: 'good' },
+    { key: 'notInterested', label: 'Sem interesse',    value: 3, tone: 'bad' },
+    { key: 'outOfIcp',      label: 'Sem fit',          value: 2, tone: 'mut' },
+    { key: 'wrongPhone',    label: 'Telefone errado',  value: 1, tone: 'violet' },
+  ],
+  confirmations: [
+    {
+      id: '101', leadId: '42', company: 'Belém Embalagens', contact: 'Gabriela', role: 'CEO',
+      time: '10:30', dayLabel: 'hoje, qui',
+      tags: [{ label: 'Embalagens', tone: 'solar' }, { label: 'Fit alto', tone: 'fit' }],
+      channel: 'WhatsApp de confirmação',
+      message: 'Olá, Gabriela! Confirmando nossa conversa de hoje às 10:30 sobre dar previsibilidade à geração de oportunidades da Belém Embalagens. Te envio o link uns 10 min antes. Combinado? 👊',
+      doneMsg: 'Reunião confirmada. 🔒',
+    },
+  ],
+  followups: [
+    {
+      id: '200', leadId: '77', company: 'Tech Solutions SP', contact: 'Carlos', role: 'Diretor',
+      when: { label: 'atrasado', tone: 'hot', sub: '09:00' },
+      tags: [{ label: 'Quente', tone: 'fit' }, { label: 'TI', tone: 'mut' }],
+      channel: 'WhatsApp pra reabrir',
+      message: 'Carlos, é da Cloud — retomando nosso contato. Acho que dá pra deixar a geração de oportunidades da Tech Solutions bem mais constante. Você tem 15 min pra eu te mostrar como?',
+      snoozeLabel: 'Adiar p/ amanhã',
+      primaryLabel: 'Enviar e marcar próxima ação',
+      doneMsg: 'Boa. De volta no radar. 💬',
+    },
+  ],
+  cleanup: [
+    { id: 'clean-not_interested', title: '3 leads · Sem interesse', reason: 'Decisor pediu pra não ligar → bloqueio definitivo', count: 3, snoozeLabel: 'Revisar depois', actionLabel: 'Bloquear todos', doneMsg: 'Leads bloqueados.' },
+    { id: 'clean-out_of_icp', title: '2 leads · Sem fit (fora do ICP)', reason: 'Operação pequena / B2C → descartar da campanha', count: 2, snoozeLabel: 'Revisar depois', actionLabel: 'Descartar', doneMsg: 'Leads descartados.' },
+  ],
+  nextBestAction: {
+    leadId: '77',
+    headline: 'Ligue agora para a Tech Solutions SP — Carlos',
+    why: 'É o follow-up mais quente da sua fila agora e está na sua janela de melhor atendimento. Fechar essa conversa aumenta sua chance de bater a meta.',
+    reasons: [
+      { icon: 'clock', label: 'Janela quente' },
+      { icon: 'award', label: 'Fit alto' },
+      { icon: 'trend', label: 'Retorno atrasado' },
+    ],
+    callLabel: 'Ligar agora',
+    skipLabel: 'Hoje chega, pular',
+  },
+  insights: [
+    { key: 'Melhor nicho do dia', icon: 'target', value: 'Embalagens', note: '2 reuniões vieram daqui. Vale começar amanhã por ele.', highlight: true },
+    { key: 'Abertura que mais converteu', icon: 'chat', value: '"Falo rápido…"', note: 'Versão curta e direta puxou mais continuidade.' },
+    { key: 'Objeção mais comum', icon: 'x', value: '"Manda apresentação"', note: 'Lembra: nunca mande genérico — devolve com a pergunta de qualificação.' },
+    { key: 'Dor que mais apareceu', icon: 'award', value: 'Dependência de indicação', note: 'O gancho de "previsibilidade" ressoa em quase toda conversa qualificada.' },
+  ],
+  tomorrow: [
+    { n: '1', label: 'reuniões pra conduzir', highlight: true },
+    { n: '1', label: 'follow-ups quentes' },
+    { n: '☀', label: 'começa por Embalagens' },
+  ],
+};

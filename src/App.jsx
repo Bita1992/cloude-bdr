@@ -3,6 +3,8 @@ import { DailyBriefing } from './DailyBriefing.jsx';
 import { MetricGridNew } from './MetricGridNew.jsx';
 import { NextTaskHero } from './NextTaskHero.jsx';
 import { CelebrationOverlay } from './CelebrationOverlay.jsx';
+import { RelatorioDiario } from './relatorio/RelatorioDiario.jsx';
+import { useDailyReport, postDailyReportAction } from './relatorio/useDailyReport.js';
 import './briefing.css';
 import {
   BarChart3,
@@ -12,6 +14,7 @@ import {
   Clock3,
   Copy,
   ExternalLink,
+  FileText,
   GitBranch,
   LogOut,
   Mail,
@@ -44,6 +47,7 @@ const NAV = [
   { id: 'leads', label: 'Lead 360', icon: Search },
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { id: 'crm', label: 'CRM Closer', icon: UserRoundCheck },
+  { id: 'report', label: 'Relatório', icon: FileText },
   { id: 'settings', label: 'Config. 3C+', icon: Settings }
 ];
 
@@ -473,6 +477,7 @@ function App() {
         {view === 'leads' && <LeadSearchView setToast={setToast} />}
         {view === 'dashboard' && <DashboardView dashboard={dashboard} closerDashboard={closerDashboard} />}
         {view === 'crm' && <CrmView setToast={setToast} />}
+        {view === 'report' && <RelatorioView />}
         {view === 'settings' && <SettingsView config={boot?.threeC} />}
       </main>
     </div>
@@ -2196,6 +2201,21 @@ function CrmView({ setToast }) {
       </div>
     </>
   );
+}
+
+function RelatorioView() {
+  const { report, loading, error } = useDailyReport();
+  if (loading) return (
+    <div className="flex items-center justify-center py-24 text-sm text-muted-foreground animate-pulse">
+      Carregando relatório…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-2xl border border-hot/30 bg-hot/5 px-5 py-6 text-sm text-hot">
+      Erro ao carregar relatório: {error}
+    </div>
+  );
+  return <RelatorioDiario data={report} onAction={postDailyReportAction} />;
 }
 
 function SettingsView({ config }) {
