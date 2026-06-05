@@ -2454,6 +2454,12 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
   const [note, setNote] = useState('');
   const [doneCount, setDoneCount] = useState(0);
   const [exhausted, setExhausted] = useState(false);
+
+  /* Fila vazia na montagem (ex.: filterTypes sem tarefas do tipo) */
+  useEffect(() => {
+    if (queue.length === 0) setExhausted(true);
+  }, []);
+
   /* mini-form state */
   const [pendingOutcome, setPendingOutcome] = useState(null);
   const [pendingField, setPendingField] = useState('');
@@ -2624,9 +2630,13 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
   if (exhausted) {
     return (
       <div className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center gap-4 text-center px-6">
-        <div className="text-5xl">🎯</div>
-        <h2 className="text-2xl font-bold">Fila zerada!</h2>
-        <p className="text-muted-foreground">{doneCount} tarefa{doneCount !== 1 ? 's' : ''} concluída{doneCount !== 1 ? 's' : ''} nesta sessão.</p>
+        <div className="text-5xl">{doneCount === 0 ? '🕐' : '🎯'}</div>
+        <h2 className="text-2xl font-bold">{doneCount === 0 ? 'Nenhuma tarefa para este bloco agora.' : 'Fila zerada!'}</h2>
+        <p className="text-muted-foreground">
+          {doneCount === 0
+            ? 'Não há tarefas deste tipo na fila no momento.'
+            : `${doneCount} tarefa${doneCount !== 1 ? 's' : ''} concluída${doneCount !== 1 ? 's' : ''} nesta sessão.`}
+        </p>
         <button
           className="mt-4 h-11 px-6 rounded-lg bg-primary text-primary-foreground font-semibold hover:brightness-110 transition"
           onClick={() => { onRefreshShell?.(); onExit?.(); }}
