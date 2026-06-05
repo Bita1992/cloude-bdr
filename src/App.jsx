@@ -36,7 +36,7 @@ const NAV = [
   { id: 'execution', label: 'Execução BDR', icon: Target },
   { id: 'funnels', label: 'Funis', icon: GitBranch },
   { id: 'enrichment', label: 'Enriquecimento', icon: ShieldCheck },
-  { id: 'agenda', label: 'Agenda', icon: CalendarClock },
+  { id: 'agenda', label: 'Tarefas', icon: CalendarClock },
   { id: 'cadences', label: 'Cadências', icon: RefreshCcw },
   { id: 'leads', label: 'Lead 360', icon: Search },
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
@@ -372,7 +372,7 @@ function App() {
               <span className="h-2 w-2 rounded-full bg-primary" />
             </div>
             <span className="font-semibold text-lg leading-none tracking-tight">
-              cloude<span className="text-primary">·</span>bdr
+              Cloud <span className="text-primary">BDR</span>
             </span>
           </div>
 
@@ -464,7 +464,7 @@ function App() {
         )}
         {view === 'enrichment' && <QueueView type="ENRICHMENT" onSelectTask={selectTask} setView={setView} setToast={setToast} />}
         {view === 'funnels' && <FunnelsView data={funnelDashboard} onSelectTask={selectTask} setView={setView} />}
-        {view === 'agenda' && <AgendaView onSelectTask={selectTask} setView={setView} setToast={setToast} />}
+        {view === 'agenda' && <AgendaView onSelectTask={selectTask} setView={setView} setToast={setToast} onStartFocus={startFocus} />}
         {view === 'cadences' && <CadenceView setToast={setToast} />}
         {view === 'leads' && <LeadSearchView setToast={setToast} />}
         {view === 'dashboard' && <DashboardView dashboard={dashboard} closerDashboard={closerDashboard} />}
@@ -520,7 +520,7 @@ function LoginView({ onLogin, toast, setToast }) {
             </div>
             <div>
               <div className="font-semibold text-lg leading-none">
-                cloude<span className="text-primary">·</span>bdr
+                Cloud <span className="text-primary">BDR</span>
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">Sales engagement</div>
             </div>
@@ -1702,25 +1702,128 @@ function QueueView({ type, onSelectTask, setView, setToast }) {
   );
 }
 
-function AgendaView({ onSelectTask, setView, setToast }) {
-  const [items, setItems] = useState([]);
+function AgendaView({ onSelectTask, setView, setToast, onStartFocus }) {
+  const [agenda, setAgenda]   = useState([]);
+  const [follows, setFollows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
+    setLoading(true);
     Promise.all([
-      api('/api/tasks/queue/FOLLOW_UP'),
       api('/api/tasks/queue/MEETING_CONFIRMATION'),
-      api('/api/tasks/queue/CLOSER_FOLLOW_UP')
-    ]).then((groups) => setItems(groups.flat().sort((a, b) => new Date(a.due_at) - new Date(b.due_at))))
-      .catch((error) => setToast(error.message));
+      api('/api/tasks/queue/CLOSER_FOLLOW_UP'),
+      api('/api/tasks/queue/FOLLOW_UP'),
+    ]).then(([meet, closer, follow]) => {
+      const sort = (arr) => [...arr].sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+      setAgenda(sort([...meet, ...closer]));
+      setFollows(sort(follow));
+    }).catch((e) => setToast(e.message))
+      .finally(() => setLoading(false));
   }, []);
+
+  function goTask(task) { onSelectTask(task.id); setView('execution'); }
+
+  const Section = ({ title, eyebrow, color, items, types, emptyText }) => (
+    <section className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div>
+          <div className={`text-[10px] uppercase tracking-widest font-semibold mb-0.5 ${color}`}>{eyebrow}</div>
+          <h2 className="font-semibold">{title}</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-primary/15 text-primary text-xs font-bold px-2.5 py-1">{items.length}</span>
+          {items.length > 0 && onStartFocus && (
+            <button
+              className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition"
+              onClick={() => onStartFocus(items[0]?.id, types, title)}
+            >
+              Focar neste grupo
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="px-5 py-8 text-center text-sm text-muted-foreground animate-pulse">Carregando...</div>
+      ) : items.length === 0 ? (
+        <div className="px-5 py-8 text-center text-sm text-muted-foreground italic">{emptyText}</div>
+      ) : (
+        <div className="divide-y divide-border">
+          {items.map((task) => {
+            const due = new Date(task.due_at);
+            const isOverdue = due < new Date();
+            const isToday = due.toDateString() === new Date().toDateString();
+            return (
+              <div key={task.id} className="group flex items-center gap-3 px-5 py-3.5 hover:bg-surface/60 transition-colors">
+                {/* Date badge */}
+                <div className={`shrink-0 w-14 text-center rounded-lg py-1.5 border ${
+                  isOverdue ? 'border-hot/40 bg-hot/10' : isToday ? 'border-primary/40 bg-primary/10' : 'border-border bg-surface'
+                }`}>
+                  <div className={`text-[10px] font-semibold uppercase ${isOverdue ? 'text-hot' : isToday ? 'text-primary' : 'text-muted-foreground'}`}>
+                    {isToday ? 'hoje' : isOverdue ? 'atr.' : due.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                  </div>
+                  <div className={`text-xs font-mono font-bold ${isOverdue ? 'text-hot' : isToday ? 'text-primary' : 'text-foreground'}`}>
+                    {due.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${TASK_BADGE_COLORS[task.type] || TASK_BADGE_COLORS.ENRICHMENT}`}>
+                      {TYPE_LABEL[task.type]}
+                    </span>
+                    <span className="font-medium text-sm truncate">{companyNameFromTask(task)}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5 truncate">{task.title}</div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {onStartFocus && (
+                    <button
+                      className="h-7 px-2.5 rounded-md bg-primary/15 text-primary text-xs font-semibold hover:bg-primary/25 transition"
+                      onClick={() => onStartFocus(task.id, [task.type], TYPE_LABEL[task.type])}
+                      title="Foco nesta tarefa"
+                    >
+                      Focar
+                    </button>
+                  )}
+                  <button
+                    className="h-7 px-2.5 rounded-md border border-border bg-surface text-xs hover:bg-surface-2 transition"
+                    onClick={() => goTask(task)}
+                    title="Abrir na execução"
+                  >
+                    Abrir
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
   return (
-    <TaskListPanel
-      title="Agenda operacional"
-      eyebrow="Compromissos"
-      items={items}
-      onSelectTask={onSelectTask}
-      setView={setView}
-      emptyText="Sem compromissos pendentes."
-    />
+    <div className="flex flex-col gap-4">
+      <Section
+        title="Agenda — reuniões e closer"
+        eyebrow="Reuniões · confirmações · closer"
+        color="text-success"
+        items={agenda}
+        types={['MEETING_CONFIRMATION', 'CLOSER_FOLLOW_UP']}
+        emptyText="Nenhuma reunião ou compromisso de closer pendente."
+      />
+      <Section
+        title="Follows — retornos e cadência"
+        eyebrow="Follow-ups programados"
+        color="text-warning"
+        items={follows}
+        types={['FOLLOW_UP']}
+        emptyText="Nenhum follow-up pendente."
+      />
+    </div>
   );
 }
 
