@@ -688,6 +688,23 @@ function processThreeCWebhook(payload = {}) {
           const hasOpenEnrichment = db.prepare("SELECT id FROM tasks WHERE lead_id = ? AND type = ? AND status = 'OPEN' LIMIT 1").get(leadId, TASK_TYPES.ENRICHMENT);
           if (!hasOpenEnrichment) createEnrichmentTask(db, leadId, 'Pesquisar novo telefone após 3C+', dateAtLocalTime(0, '08:00'));
         }
+        /* Decisor localizado sem cadência ativa — cria CALL de retorno */
+        if (event.classification === 'connected') {
+          const hasOpenCall = db.prepare("SELECT id FROM tasks WHERE lead_id = ? AND type = 'CALL' AND status = 'OPEN' LIMIT 1").get(leadId);
+          if (!hasOpenCall) {
+            const dueAt = addDaysIso(nowIso(), 1, '09:00');
+            createTask(db, {
+              leadId,
+              type: TASK_TYPES.CALL,
+              title: 'Retorno — decisor localizado pela discadora',
+              dueAt,
+              block: 'CALL',
+              priority: 'HIGH',
+              fields: { phone: event.phone || '', conversation_note: noteForThreeCEvent(event) },
+            });
+            db.prepare("UPDATE leads SET state = 'CALL', updated_at = ? WHERE id = ? AND state = 'NEW'").run(nowIso(), leadId);
+          }
+        }
       }
     }
 
@@ -1182,6 +1199,14 @@ app.get('/api/dashboard/bdr', (req, res) => {
     callsDoneToday: q("SELECT COUNT(*) AS total FROM tasks WHERE type = 'CALL' AND status = 'DONE' AND completed_at BETWEEN ? AND ?", todayStart, todayEnd),
     significantCallsToday: q("SELECT COUNT(*) AS total FROM tasks WHERE type = 'CALL' AND status = 'DONE' AND completed_at BETWEEN ? AND ? AND json_extract(fields_json, '$.call_significance') = 'SIGNIFICANT'", todayStart, todayEnd),
     nonSignificantCallsToday: q("SELECT COUNT(*) AS total FROM tasks WHERE type = 'CALL' AND status = 'DONE' AND completed_at BETWEEN ? AND ? AND json_extract(fields_json, '$.call_significance') = 'NON_SIGNIFICANT'", todayStart, todayEnd),
+    connectionsToday: q("SELECT COUNT(DISTINCT lead_id) AS total FROM integration_events WHERE classification = 'connected' AND created_at BETWEEN ? AND ? AND lead_id IS NOT NULL", todayStart, todayEnd),
+    meetingsScheduledToday: q("SELECT COUNT(*) AS total FROM tasks WHERE outcome IN ('meeting_scheduled','meeting_happened') AND completed_at BETWEEN ? AND ?", todayStart, todayEnd),
+    meetingsThisWeek: (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // volta para segunda
+      d.setHours(0, 0, 0, 0);
+      return q("SELECT COUNT(*) AS total FROM tasks WHERE outcome IN ('meeting_scheduled','meeting_happened') AND completed_at >= ?", d.toISOString());
+    })(),
     meaningfulCalls: q("SELECT COUNT(*) AS total FROM tasks WHERE type = 'CALL' AND status = 'DONE' AND (outcome IN ('interested','meeting_scheduled','callback_requested','gatekeeper','gatekeeper_email','email_only','material_requested','whatsapp_negotiation') OR json_extract(fields_json, '$.call_significance') = 'SIGNIFICANT')"),
     meetings: q('SELECT COUNT(*) AS total FROM opportunities'),
     lost: q("SELECT COUNT(*) AS total FROM leads WHERE state = 'LOST'"),

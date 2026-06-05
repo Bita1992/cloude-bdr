@@ -16,6 +16,8 @@ import {
   LogOut,
   Mail,
   MessageCircle,
+  MessageSquare,
+  Send,
   Moon,
   MoreHorizontal,
   PanelLeftClose,
@@ -37,6 +39,7 @@ const NAV = [
   { id: 'funnels', label: 'Funis', icon: GitBranch },
   { id: 'enrichment', label: 'Enriquecimento', icon: ShieldCheck },
   { id: 'agenda', label: 'Tarefas', icon: CalendarClock },
+  { id: 'messages', label: 'Mensagens', icon: MessageSquare },
   { id: 'cadences', label: 'Cadências', icon: RefreshCcw },
   { id: 'leads', label: 'Lead 360', icon: Search },
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
@@ -465,6 +468,7 @@ function App() {
         {view === 'enrichment' && <QueueView type="ENRICHMENT" onSelectTask={selectTask} setView={setView} setToast={setToast} />}
         {view === 'funnels' && <FunnelsView data={funnelDashboard} onSelectTask={selectTask} setView={setView} />}
         {view === 'agenda' && <AgendaView onSelectTask={selectTask} setView={setView} setToast={setToast} onStartFocus={startFocus} />}
+        {view === 'messages' && <MensagensView setToast={setToast} onSelectTask={selectTask} setView={setView} />}
         {view === 'cadences' && <CadenceView setToast={setToast} />}
         {view === 'leads' && <LeadSearchView setToast={setToast} />}
         {view === 'dashboard' && <DashboardView dashboard={dashboard} closerDashboard={closerDashboard} />}
@@ -2397,6 +2401,204 @@ function SettingsView({ config }) {
 /* ─────────────────────────────────────────────
    MODO FOCO — tela cheia sem distração
    ───────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────
+   MENSAGENS EM LOTE — WhatsApp e e-mail
+   ───────────────────────────────────────────── */
+
+function MensagensView({ setToast, onSelectTask, setView }) {
+  const [items, setItems]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [sending, setSending]   = useState(new Set());
+  const [sent, setSent]         = useState(new Set());
+  const [filter, setFilter]     = useState('ALL'); // ALL | WHATSAPP | EMAIL | LINKEDIN
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api('/api/tasks/queue/WHATSAPP'),
+      api('/api/tasks/queue/EMAIL'),
+      api('/api/tasks/queue/LINKEDIN'),
+    ]).then(([wa, em, li]) => {
+      setItems([...wa, ...em, ...li].sort((a, b) => new Date(a.due_at) - new Date(b.due_at)));
+    }).catch((e) => setToast(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function markSent(task, outcome) {
+    setSending((s) => new Set(s).add(task.id));
+    try {
+      await api(`/api/tasks/${task.id}/complete`, {
+        method: 'POST',
+        body: { outcome, fields: { phone: task.primary_phone || '' } },
+      });
+      setSent((s) => new Set(s).add(task.id));
+    } catch (e) {
+      setToast(e.message);
+    } finally {
+      setSending((s) => { const n = new Set(s); n.delete(task.id); return n; });
+    }
+  }
+
+  async function markAllSent() {
+    const visible = filtered.filter((t) => !sent.has(t.id));
+    for (const task of visible) {
+      await markSent(task, task.type === 'LINKEDIN' ? 'linkedin_done' : 'sent');
+    }
+  }
+
+  function openChannel(task, message) {
+    const phone = String(task.primary_phone || '').replace(/\D/g, '');
+    if (task.type === 'WHATSAPP') {
+      const wa = phone.startsWith('55') ? phone : `55${phone}`;
+      window.open(`https://wa.me/${wa}?text=${encodeURIComponent(message || '')}`, '_blank');
+    } else if (task.type === 'EMAIL') {
+      window.open(`mailto:?subject=${encodeURIComponent('Contato Cloud Marketing')}&body=${encodeURIComponent(message || '')}`, '_blank');
+    } else if (task.type === 'LINKEDIN') {
+      window.open('https://www.linkedin.com/search/results/companies/', '_blank');
+    }
+  }
+
+  const filtered = filter === 'ALL' ? items : items.filter((t) => t.type === filter);
+  const pendingCount = filtered.filter((t) => !sent.has(t.id)).length;
+
+  const channelColor = { WHATSAPP: 'text-success', EMAIL: 'text-info', LINKEDIN: 'text-primary' };
+  const channelBg   = { WHATSAPP: 'bg-success/10 border-success/30', EMAIL: 'bg-info/10 border-info/30', LINKEDIN: 'bg-primary/10 border-primary/30' };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Header */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border flex-wrap">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-primary font-semibold mb-0.5">Em lote</div>
+            <h2 className="font-semibold">Mensagens pendentes</h2>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro de tipo */}
+            {['ALL', 'WHATSAPP', 'EMAIL', 'LINKEDIN'].map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`h-7 px-3 rounded-md text-xs font-semibold border transition-colors ${
+                  filter === f
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-border bg-surface text-muted-foreground hover:text-foreground hover:bg-surface-2'
+                }`}
+              >
+                {f === 'ALL' ? 'Todos' : f === 'WHATSAPP' ? 'WhatsApp' : f === 'EMAIL' ? 'E-mail' : 'LinkedIn'}
+                {f !== 'ALL' && (
+                  <span className="ml-1.5 opacity-70">
+                    {items.filter((t) => t.type === f && !sent.has(t.id)).length}
+                  </span>
+                )}
+              </button>
+            ))}
+            {pendingCount > 0 && (
+              <button
+                onClick={markAllSent}
+                className="h-7 px-3 rounded-md bg-success/15 border border-success/30 text-success text-xs font-semibold hover:bg-success/25 transition flex items-center gap-1.5"
+              >
+                <Send size={12} /> Marcar {pendingCount} como enviados
+              </button>
+            )}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="px-5 py-10 text-center text-muted-foreground text-sm animate-pulse">Carregando...</div>
+        ) : filtered.length === 0 ? (
+          <div className="px-5 py-10 text-center text-muted-foreground text-sm">Nenhuma mensagem pendente.</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {filtered.map((task) => {
+              const isSent   = sent.has(task.id);
+              const isSending = sending.has(task.id);
+              const isExpanded = expanded === task.id;
+              const message  = task.payload?.messageTemplate
+                ? replaceTemplate(task.payload.messageTemplate, task, null)
+                : '';
+              const outcome  = task.type === 'LINKEDIN' ? 'linkedin_done' : 'sent';
+
+              return (
+                <div
+                  key={task.id}
+                  className={`transition-colors ${isSent ? 'opacity-40' : 'hover:bg-surface/40'}`}
+                >
+                  {/* Row */}
+                  <div className="flex items-center gap-3 px-5 py-3.5">
+                    {/* Type badge */}
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${channelBg[task.type]}`}>
+                      <span className={channelColor[task.type]}>{task.type === 'WHATSAPP' ? 'WA' : task.type === 'EMAIL' ? 'EM' : 'LI'}</span>
+                    </span>
+
+                    {/* Company + title */}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">{companyNameFromTask(task)}</div>
+                      <div className="text-xs text-muted-foreground truncate">{task.title}</div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {message && (
+                        <button
+                          className="h-7 px-2.5 rounded-md border border-border bg-surface text-xs hover:bg-surface-2 transition"
+                          onClick={() => setExpanded(isExpanded ? null : task.id)}
+                          title="Ver mensagem"
+                        >
+                          {isExpanded ? 'Fechar' : 'Ver'}
+                        </button>
+                      )}
+                      {task.type !== 'LINKEDIN' && (
+                        <button
+                          className={`h-7 px-2.5 rounded-md border text-xs font-semibold transition ${channelBg[task.type]} ${channelColor[task.type]} hover:opacity-80`}
+                          onClick={() => openChannel(task, message)}
+                          title={`Abrir ${task.type === 'WHATSAPP' ? 'WhatsApp' : 'e-mail'}`}
+                        >
+                          Abrir
+                        </button>
+                      )}
+                      <button
+                        disabled={isSent || isSending}
+                        onClick={() => markSent(task, outcome)}
+                        className={`h-7 px-2.5 rounded-md text-xs font-semibold transition border ${
+                          isSent
+                            ? 'border-success/30 bg-success/10 text-success cursor-default'
+                            : 'border-border bg-surface hover:bg-surface-2 text-muted-foreground'
+                        }`}
+                      >
+                        {isSent ? '✓ Enviado' : isSending ? '...' : 'Marcar enviado'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded message */}
+                  {isExpanded && message && (
+                    <div className="px-5 pb-4">
+                      <div className="rounded-xl border border-border bg-surface p-4 text-sm whitespace-pre-wrap text-muted-foreground leading-relaxed max-h-48 overflow-y-auto relative">
+                        {message}
+                        <button
+                          className="absolute top-2 right-2 h-6 px-2 rounded border border-border bg-card text-[10px] hover:bg-surface transition"
+                          onClick={async () => {
+                            try { await navigator.clipboard.writeText(message); setToast('Mensagem copiada.'); }
+                            catch { setToast('Não foi possível copiar.'); }
+                          }}
+                        >
+                          Copiar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ─────────────────────────────────────────────
    PLANO DO DIA — time-boxing por blocos

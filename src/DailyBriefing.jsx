@@ -1,11 +1,18 @@
 import { useMemo } from 'react';
-import { PlayCircle, Target, Phone, Calendar, TrendingUp, Zap } from 'lucide-react';
+import { PlayCircle, Target, Phone, Calendar, TrendingUp, Zap, Users } from 'lucide-react';
 
 const PHRASES = {
   dawn:      ['Você chegou antes da maioria. Isso já é uma vantagem.', 'Cedo é quando os pipelines se constroem. Bora.'],
   morning:   ['Cada ligação que você faz agora é dinheiro no futuro.', 'Uma conversa pode mudar o quarter. Essa pode ser ela.'],
   afternoon: ['Tarde é hora de colher o que a manhã plantou.', 'Follow-up bem feito é reunião marcada. Vai lá.'],
   evening:   ['Encerre bem o dia — o pipeline de amanhã agradece.', 'Último sprint do dia. O que você fizer agora conta.'],
+};
+
+/* Metas diárias — ajuste conforme o seu target */
+const GOALS = {
+  calls:       80,
+  connections: 8,
+  meetings:    2,
 };
 
 function getSlot(h) {
@@ -21,6 +28,35 @@ function getGreeting(h) {
   return 'Boa noite';
 }
 
+function GoalBar({ label, value, goal, accentOk, accentWarn, accentBad, icon: Icon }) {
+  const pct = goal > 0 ? Math.min(100, Math.round((value / goal) * 100)) : 0;
+  const ratio = goal > 0 ? value / goal : 0;
+  const accent = ratio >= 1 ? accentOk : ratio >= 0.6 ? accentWarn : accentBad;
+  const done = value >= goal;
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 w-36 shrink-0">
+        <Icon size={13} className="text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground truncate">{label}</span>
+      </div>
+      <div className="flex-1 h-2 rounded-full bg-surface-2 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: `var(--${accent})` }}
+        />
+      </div>
+      <div className="flex items-center gap-1 w-20 justify-end shrink-0">
+        <span className={`font-mono text-sm font-bold`} style={{ color: `var(--${accent})` }}>
+          {value}
+        </span>
+        <span className="text-muted-foreground text-xs font-mono">/{goal}</span>
+        {done && <span className="text-success text-[10px] ml-0.5">✓</span>}
+      </div>
+    </div>
+  );
+}
+
 export function DailyBriefing({ dashboard, userName, onStartFocus }) {
   const now  = new Date();
   const hour = now.getHours();
@@ -30,28 +66,26 @@ export function DailyBriefing({ dashboard, userName, onStartFocus }) {
   const phrases = PHRASES[slot];
   const phrase  = phrases[Math.floor(min / 30) % phrases.length];
 
-  const meetings  = dashboard?.meetings        ?? 0;
-  const callsDone = dashboard?.callsDoneToday  ?? 0;
-  const callGoal  = 50;
-  const callPct   = Math.min(100, Math.round((callsDone / callGoal) * 100));
+  const callsDone    = dashboard?.callsDoneToday      ?? 0;
+  const connections  = dashboard?.connectionsToday    ?? 0;
+  const meetingsWeek = dashboard?.meetingsThisWeek    ?? dashboard?.meetings ?? 0;
+  const openTasks    = dashboard?.openTasks           ?? 0;
+  const overdue      = dashboard?.overdue             ?? 0;
+  const dueToday     = dashboard?.dueToday            ?? 0;
+  const sigCalls     = dashboard?.significantCallsToday ?? 0;
 
   const meetingDelta = useMemo(() => {
     const y = dashboard?.meetingsYesterday;
     if (y == null) return null;
-    const d = meetings - y;
+    const d = meetingsWeek - y;
     return d === 0 ? null : d > 0 ? `+${d} vs ontem` : `${d} vs ontem`;
-  }, [meetings, dashboard?.meetingsYesterday]);
-
-  const openTasks = dashboard?.openTasks   ?? 0;
-  const overdue   = dashboard?.overdue     ?? 0;
-  const dueToday  = dashboard?.dueToday    ?? 0;
-  const sigCalls  = dashboard?.significantCallsToday ?? 0;
+  }, [meetingsWeek, dashboard?.meetingsYesterday]);
 
   const stats = [
-    { label: 'Ligações hoje',      value: callsDone, hint: `meta ${callGoal}`, pct: callPct,  accent: 'primary', icon: Phone },
-    { label: 'Reuniões',           value: meetings,  hint: 'esta semana',      pct: Math.min(100, meetings * 20), accent: 'success', icon: Calendar },
-    { label: 'Tarefas abertas',    value: openTasks, hint: `${dueToday} hoje`, pct: dueToday && openTasks ? Math.round((dueToday / openTasks) * 100) : 0, accent: 'info', icon: Target },
-    { label: 'Sig. hoje',          value: sigCalls,  hint: overdue > 0 ? `${overdue} atrasadas` : 'ok', pct: Math.min(100, sigCalls * 10), accent: overdue > 0 ? 'hot' : 'warning', icon: TrendingUp },
+    { label: 'Ligações hoje',   value: callsDone,   hint: `meta ${GOALS.calls}`,   pct: Math.min(100, Math.round((callsDone / GOALS.calls) * 100)),     accent: 'primary',  icon: Phone },
+    { label: 'Reuniões semana', value: meetingsWeek, hint: `meta ${GOALS.meetings}`, pct: Math.min(100, meetingsWeek * (100 / GOALS.meetings)),           accent: 'success',  icon: Calendar },
+    { label: 'Tarefas abertas', value: openTasks,   hint: `${dueToday} hoje`,        pct: dueToday && openTasks ? Math.round((dueToday / openTasks) * 100) : 0, accent: 'info', icon: Target },
+    { label: 'Sig. hoje',       value: sigCalls,    hint: overdue > 0 ? `${overdue} atrasadas` : 'ok', pct: Math.min(100, sigCalls * 10), accent: overdue > 0 ? 'hot' : 'warning', icon: TrendingUp },
   ];
 
   return (
@@ -128,6 +162,16 @@ export function DailyBriefing({ dashboard, userName, onStartFocus }) {
             );
           })}
         </div>
+      </div>
+
+      {/* ── Meta do dia — barra de progresso ── */}
+      <div className="relative border-t border-border bg-card/60 px-6 md:px-8 py-4 flex flex-col gap-2.5">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-1 flex items-center gap-1.5">
+          <Target size={11} /> Meta do dia
+        </div>
+        <GoalBar label="Ligações"   value={callsDone}   goal={GOALS.calls}       icon={Phone}    accentOk="success" accentWarn="primary" accentBad="warning" />
+        <GoalBar label="Conexões"   value={connections} goal={GOALS.connections} icon={Users}    accentOk="success" accentWarn="info"    accentBad="warning" />
+        <GoalBar label="Reuniões"   value={meetingsWeek}goal={GOALS.meetings}    icon={Calendar} accentOk="success" accentWarn="warning" accentBad="hot" />
       </div>
     </section>
   );
