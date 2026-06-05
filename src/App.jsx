@@ -2406,13 +2406,17 @@ function SettingsView({ config }) {
    MENSAGENS EM LOTE — WhatsApp e e-mail
    ───────────────────────────────────────────── */
 
-function MensagensView({ setToast, onSelectTask, setView }) {
-  const [items, setItems]       = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [sending, setSending]   = useState(new Set());
-  const [sent, setSent]         = useState(new Set());
-  const [filter, setFilter]     = useState('ALL'); // ALL | WHATSAPP | EMAIL | LINKEDIN
-  const [expanded, setExpanded] = useState(null);
+function MensagensView({ setToast }) {
+  const [items, setItems]         = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [sending, setSending]     = useState(new Set());
+  const [sent, setSent]           = useState(new Set());
+  const [filter, setFilter]       = useState('ALL');
+  /* detail panel */
+  const [openId, setOpenId]       = useState(null);
+  const [detail, setDetail]       = useState(null);   // { task, lead }
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [editMsg, setEditMsg]     = useState('');     // mensagem editável
 
   useEffect(() => {
     setLoading(true);
@@ -2426,14 +2430,34 @@ function MensagensView({ setToast, onSelectTask, setView }) {
       .finally(() => setLoading(false));
   }, []);
 
-  async function markSent(task, outcome) {
+  async function toggleDetail(task) {
+    if (openId === task.id) { setOpenId(null); setDetail(null); return; }
+    setOpenId(task.id);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const data = await api(`/api/tasks/${task.id}`);
+      setDetail(data);
+      const msg = data.task?.payload?.messageTemplate
+        ? replaceTemplate(data.task.payload.messageTemplate, data.task, data.lead)
+        : '';
+      setEditMsg(msg);
+    } catch (e) {
+      setToast(e.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function markSent(task, outcome, extraFields = {}) {
     setSending((s) => new Set(s).add(task.id));
     try {
       await api(`/api/tasks/${task.id}/complete`, {
         method: 'POST',
-        body: { outcome, fields: { phone: task.primary_phone || '' } },
+        body: { outcome, fields: { phone: task.primary_phone || '', message: editMsg || '', ...extraFields } },
       });
       setSent((s) => new Set(s).add(task.id));
+      if (openId === task.id) { setOpenId(null); setDetail(null); }
     } catch (e) {
       setToast(e.message);
     } finally {
@@ -2442,65 +2466,52 @@ function MensagensView({ setToast, onSelectTask, setView }) {
   }
 
   async function markAllSent() {
-    const visible = filtered.filter((t) => !sent.has(t.id));
-    for (const task of visible) {
+    for (const task of filtered.filter((t) => !sent.has(t.id))) {
       await markSent(task, task.type === 'LINKEDIN' ? 'linkedin_done' : 'sent');
     }
   }
 
-  function openChannel(task, message) {
+  function openChannel(task, msg) {
     const phone = String(task.primary_phone || '').replace(/\D/g, '');
     if (task.type === 'WHATSAPP') {
       const wa = phone.startsWith('55') ? phone : `55${phone}`;
-      window.open(`https://wa.me/${wa}?text=${encodeURIComponent(message || '')}`, '_blank');
+      window.open(`https://wa.me/${wa}?text=${encodeURIComponent(msg || '')}`, '_blank');
     } else if (task.type === 'EMAIL') {
-      window.open(`mailto:?subject=${encodeURIComponent('Contato Cloud Marketing')}&body=${encodeURIComponent(message || '')}`, '_blank');
-    } else if (task.type === 'LINKEDIN') {
+      const subject = detail?.task?.payload?.subjectTemplate
+        ? replaceTemplate(detail.task.payload.subjectTemplate, detail.task, detail.lead)
+        : 'Contato Cloud Marketing';
+      window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg || '')}`, '_blank');
+    } else {
       window.open('https://www.linkedin.com/search/results/companies/', '_blank');
     }
   }
 
-  const filtered = filter === 'ALL' ? items : items.filter((t) => t.type === filter);
+  const filtered     = filter === 'ALL' ? items : items.filter((t) => t.type === filter);
   const pendingCount = filtered.filter((t) => !sent.has(t.id)).length;
-
   const channelColor = { WHATSAPP: 'text-success', EMAIL: 'text-info', LINKEDIN: 'text-primary' };
-  const channelBg   = { WHATSAPP: 'bg-success/10 border-success/30', EMAIL: 'bg-info/10 border-info/30', LINKEDIN: 'bg-primary/10 border-primary/30' };
+  const channelBg    = { WHATSAPP: 'bg-success/10 border-success/30', EMAIL: 'bg-info/10 border-info/30', LINKEDIN: 'bg-primary/10 border-primary/30' };
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Header */}
       <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        {/* Toolbar */}
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border flex-wrap">
           <div>
             <div className="text-[10px] uppercase tracking-widest text-primary font-semibold mb-0.5">Em lote</div>
             <h2 className="font-semibold">Mensagens pendentes</h2>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Filtro de tipo */}
-            {['ALL', 'WHATSAPP', 'EMAIL', 'LINKEDIN'].map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`h-7 px-3 rounded-md text-xs font-semibold border transition-colors ${
-                  filter === f
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'border-border bg-surface text-muted-foreground hover:text-foreground hover:bg-surface-2'
-                }`}
+            {['ALL','WHATSAPP','EMAIL','LINKEDIN'].map((f) => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`h-7 px-3 rounded-md text-xs font-semibold border transition-colors ${filter === f ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-surface text-muted-foreground hover:text-foreground hover:bg-surface-2'}`}
               >
                 {f === 'ALL' ? 'Todos' : f === 'WHATSAPP' ? 'WhatsApp' : f === 'EMAIL' ? 'E-mail' : 'LinkedIn'}
-                {f !== 'ALL' && (
-                  <span className="ml-1.5 opacity-70">
-                    {items.filter((t) => t.type === f && !sent.has(t.id)).length}
-                  </span>
-                )}
+                {f !== 'ALL' && <span className="ml-1.5 opacity-70">{items.filter((t) => t.type === f && !sent.has(t.id)).length}</span>}
               </button>
             ))}
             {pendingCount > 0 && (
-              <button
-                onClick={markAllSent}
-                className="h-7 px-3 rounded-md bg-success/15 border border-success/30 text-success text-xs font-semibold hover:bg-success/25 transition flex items-center gap-1.5"
-              >
-                <Send size={12} /> Marcar {pendingCount} como enviados
+              <button onClick={markAllSent} className="h-7 px-3 rounded-md bg-success/15 border border-success/30 text-success text-xs font-semibold hover:bg-success/25 transition flex items-center gap-1.5">
+                <Send size={12} /> Marcar {pendingCount} enviados
               </button>
             )}
           </div>
@@ -2513,81 +2524,168 @@ function MensagensView({ setToast, onSelectTask, setView }) {
         ) : (
           <div className="divide-y divide-border">
             {filtered.map((task) => {
-              const isSent   = sent.has(task.id);
+              const isSent    = sent.has(task.id);
               const isSending = sending.has(task.id);
-              const isExpanded = expanded === task.id;
-              const message  = task.payload?.messageTemplate
-                ? replaceTemplate(task.payload.messageTemplate, task, null)
-                : '';
-              const outcome  = task.type === 'LINKEDIN' ? 'linkedin_done' : 'sent';
+              const isOpen    = openId === task.id;
+              const outcome   = task.type === 'LINKEDIN' ? 'linkedin_done' : 'sent';
+              const lead      = isOpen ? detail?.lead  : null;
+              const dtask     = isOpen ? detail?.task  : null;
+              const decisor   = lead?.contacts?.[0];
+              const pain      = lead?.enrichment?.pain_hypothesis || lead?.recentContext?.[0]?.note || '';
+              const recentCtx = lead?.recentContext?.slice(0, 3) || [];
+              const recordings = lead?.recordings?.slice(0, 3) || [];
 
               return (
-                <div
-                  key={task.id}
-                  className={`transition-colors ${isSent ? 'opacity-40' : 'hover:bg-surface/40'}`}
-                >
-                  {/* Row */}
-                  <div className="flex items-center gap-3 px-5 py-3.5">
-                    {/* Type badge */}
+                <div key={task.id} className={isSent ? 'opacity-40' : ''}>
+                  {/* ── Row ── */}
+                  <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-surface/40 transition-colors">
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${channelBg[task.type]}`}>
                       <span className={channelColor[task.type]}>{task.type === 'WHATSAPP' ? 'WA' : task.type === 'EMAIL' ? 'EM' : 'LI'}</span>
                     </span>
-
-                    {/* Company + title */}
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm truncate">{companyNameFromTask(task)}</div>
                       <div className="text-xs text-muted-foreground truncate">{task.title}</div>
                     </div>
-
-                    {/* Actions */}
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {message && (
-                        <button
-                          className="h-7 px-2.5 rounded-md border border-border bg-surface text-xs hover:bg-surface-2 transition"
-                          onClick={() => setExpanded(isExpanded ? null : task.id)}
-                          title="Ver mensagem"
-                        >
-                          {isExpanded ? 'Fechar' : 'Ver'}
-                        </button>
-                      )}
-                      {task.type !== 'LINKEDIN' && (
-                        <button
-                          className={`h-7 px-2.5 rounded-md border text-xs font-semibold transition ${channelBg[task.type]} ${channelColor[task.type]} hover:opacity-80`}
-                          onClick={() => openChannel(task, message)}
-                          title={`Abrir ${task.type === 'WHATSAPP' ? 'WhatsApp' : 'e-mail'}`}
-                        >
-                          Abrir
-                        </button>
-                      )}
+                      <button
+                        className={`h-7 px-2.5 rounded-md border text-xs transition ${isOpen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-surface hover:bg-surface-2 text-muted-foreground'}`}
+                        onClick={() => toggleDetail(task)}
+                      >
+                        {isOpen ? 'Fechar' : 'Ver contexto'}
+                      </button>
                       <button
                         disabled={isSent || isSending}
                         onClick={() => markSent(task, outcome)}
-                        className={`h-7 px-2.5 rounded-md text-xs font-semibold transition border ${
-                          isSent
-                            ? 'border-success/30 bg-success/10 text-success cursor-default'
-                            : 'border-border bg-surface hover:bg-surface-2 text-muted-foreground'
-                        }`}
+                        className={`h-7 px-2.5 rounded-md text-xs font-semibold transition border ${isSent ? 'border-success/30 bg-success/10 text-success cursor-default' : 'border-border bg-surface hover:bg-surface-2 text-muted-foreground'}`}
                       >
                         {isSent ? '✓ Enviado' : isSending ? '...' : 'Marcar enviado'}
                       </button>
                     </div>
                   </div>
 
-                  {/* Expanded message */}
-                  {isExpanded && message && (
-                    <div className="px-5 pb-4">
-                      <div className="rounded-xl border border-border bg-surface p-4 text-sm whitespace-pre-wrap text-muted-foreground leading-relaxed max-h-48 overflow-y-auto relative">
-                        {message}
-                        <button
-                          className="absolute top-2 right-2 h-6 px-2 rounded border border-border bg-card text-[10px] hover:bg-surface transition"
-                          onClick={async () => {
-                            try { await navigator.clipboard.writeText(message); setToast('Mensagem copiada.'); }
-                            catch { setToast('Não foi possível copiar.'); }
-                          }}
-                        >
-                          Copiar
-                        </button>
-                      </div>
+                  {/* ── Painel contextual ── */}
+                  {isOpen && (
+                    <div className="border-t border-primary/20 bg-primary/3 px-5 py-5 flex flex-col gap-5">
+                      {detailLoading ? (
+                        <div className="text-center text-muted-foreground text-sm animate-pulse py-4">Carregando lead...</div>
+                      ) : detail ? (
+                        <>
+                          {/* Lead header */}
+                          <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-primary font-semibold">{TYPE_LABEL[task.type]}</div>
+                              <h3 className="text-xl font-bold mt-0.5">{companyNameFromTask(dtask || task)}</h3>
+                              {(lead?.city || lead?.cnpj) && (
+                                <p className="text-xs text-muted-foreground font-mono mt-0.5">{[lead.city, lead.cnpj].filter(Boolean).join(' · ')}</p>
+                              )}
+                            </div>
+                            {lead?.state && (
+                              <span className="text-xs rounded-full border border-border bg-surface px-3 py-1 text-muted-foreground">{lead.state}</span>
+                            )}
+                          </div>
+
+                          {/* Decisor + telefone */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {decisor && (
+                              <div className="rounded-xl border border-border bg-card p-3">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Decisor</div>
+                                <div className="font-semibold">{decisor.name}</div>
+                                {decisor.role && <div className="text-xs text-muted-foreground">{decisor.role}</div>}
+                              </div>
+                            )}
+                            {task.primary_phone && (
+                              <div className="rounded-xl border border-border bg-card p-3">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Telefone</div>
+                                <div className="font-mono font-semibold">{task.primary_phone}</div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Dor / contexto */}
+                          {(pain || recentCtx.length > 0) && (
+                            <div className="rounded-xl border border-border bg-card p-4 flex flex-col gap-3">
+                              {pain && (
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Hipótese de dor</div>
+                                  <p className="text-sm leading-relaxed">{pain}</p>
+                                </div>
+                              )}
+                              {recentCtx.length > 0 && (
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2">Contexto recente</div>
+                                  {recentCtx.map((c, i) => (
+                                    <div key={i} className="border-b border-border pb-2 mb-2 last:border-0 last:mb-0 last:pb-0">
+                                      <div className="text-[10px] text-muted-foreground font-mono">{formatDate(c.created_at)} · {c.title}</div>
+                                      <div className="text-xs mt-0.5">{c.note}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Gravações */}
+                          {recordings.length > 0 && (
+                            <div className="rounded-xl border border-border bg-card p-4">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">Ligações anteriores</div>
+                              <div className="flex flex-col gap-3">
+                                {recordings.map((rec) => (
+                                  <div key={rec.id} className="flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="font-medium">{rec.phone} · {rec.qualification || rec.classification || 'ligação'}</span>
+                                      <span className="text-muted-foreground font-mono">{formatDate(rec.created_at)}{rec.duration_seconds ? ` · ${rec.duration_seconds}s` : ''}</span>
+                                    </div>
+                                    {/^[a-f0-9]{24}$/.test(rec.call_id || '') && (
+                                      <audio controls src={`/api/calls/${rec.id}/recording`} preload="none" className="w-full h-8 rounded-lg" />
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Mensagem editável */}
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <div className="text-[10px] uppercase tracking-wider text-info font-semibold">Mensagem</div>
+                              <button
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition"
+                                onClick={async () => {
+                                  try { await navigator.clipboard.writeText(editMsg); setToast('Mensagem copiada.'); }
+                                  catch { setToast('Não foi possível copiar.'); }
+                                }}
+                              >
+                                Copiar
+                              </button>
+                            </div>
+                            <textarea
+                              value={editMsg}
+                              onChange={(e) => setEditMsg(e.target.value)}
+                              rows={5}
+                              className="w-full rounded-xl border border-border bg-input px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-ring transition resize-none"
+                            />
+                          </div>
+
+                          {/* Ações finais */}
+                          <div className="flex items-center gap-3 flex-wrap">
+                            {task.type !== 'LINKEDIN' && (
+                              <button
+                                className={`h-10 px-4 rounded-lg border text-sm font-semibold transition ${channelBg[task.type]} ${channelColor[task.type]} hover:opacity-80`}
+                                onClick={() => openChannel(task, editMsg)}
+                              >
+                                {task.type === 'WHATSAPP' ? 'Abrir WhatsApp' : 'Abrir e-mail'}
+                              </button>
+                            )}
+                            <button
+                              disabled={isSending}
+                              onClick={() => markSent(task, outcome)}
+                              className="h-10 px-5 rounded-lg bg-success/15 border border-success/30 text-success text-sm font-semibold hover:bg-success/25 transition disabled:opacity-50 flex items-center gap-2"
+                            >
+                              <Send size={14} /> Marcar como enviado
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   )}
                 </div>
