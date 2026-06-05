@@ -17,7 +17,7 @@ function fmt(iso) {
   catch { return null; }
 }
 
-export function NextTaskHero({ task, onExecute }) {
+export function NextTaskHero({ task, onExecute, onSkip }) {
   if (!task) {
     return (
       <div className="rounded-2xl border border-border bg-card p-6 flex items-center justify-center gap-3 text-muted-foreground">
@@ -65,7 +65,7 @@ export function NextTaskHero({ task, onExecute }) {
         <button
           type="button"
           className="h-9 px-4 rounded-md border border-border bg-surface text-sm hover:bg-surface-2 transition-colors"
-          onClick={() => {}}
+          onClick={() => onSkip?.(task)}
         >
           Pular
         </button>

@@ -194,6 +194,8 @@ function App() {
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(false);
   const [celebrating, setCelebrating] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusStartTaskId, setFocusStartTaskId] = useState(null);
 
   async function loadShell({ respectUrlTask = true } = {}) {
     const [bootstrap, bdr, funnels, closer, today] = await Promise.all([
@@ -319,6 +321,11 @@ function App() {
     setToast(message);
   }
 
+  function startFocus(taskId) {
+    setFocusStartTaskId(taskId ?? tasks[0]?.id ?? null);
+    setFocusMode(true);
+  }
+
   if (auth.checking) return <AuthLoading />;
 
   if (!auth.authenticated) {
@@ -330,6 +337,26 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {/* ── CelebrationOverlay (sempre por cima) ── */}
+      {celebrating && (
+        <CelebrationOverlay
+          meetingsTotal={dashboard?.meetings ?? 0}
+          onDone={() => setCelebrating(false)}
+        />
+      )}
+
+      {/* ── Modo Foco (full-screen z-50) ── */}
+      {focusMode && (
+        <FocusMode
+          tasks={tasks}
+          startTaskId={focusStartTaskId}
+          onExit={() => setFocusMode(false)}
+          onCelebrate={() => setCelebrating(true)}
+          onRefreshShell={() => loadShell({ respectUrlTask: false }).catch((e) => setToast(e.message))}
+          setToast={setToast}
+        />
+      )}
+
       {/* ── TopBar ── */}
       <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-xl">
         <div className="mx-auto max-w-[1600px] px-5 h-14 flex items-center gap-3">
@@ -413,13 +440,6 @@ function App() {
           </div>
         )}
 
-        {celebrating && (
-          <CelebrationOverlay
-            meetingsTotal={dashboard?.meetings ?? 0}
-            onDone={() => setCelebrating(false)}
-          />
-        )}
-
         {view === 'execution' && (
           <ExecutionView
             dashboard={dashboard}
@@ -433,6 +453,7 @@ function App() {
             onCelebrate={() => setCelebrating(true)}
             onReloadTask={reloadSelectedTask}
             setToast={setToast}
+            onStartFocus={startFocus}
           />
         )}
         {view === 'enrichment' && <QueueView type="ENRICHMENT" onSelectTask={selectTask} setView={setView} setToast={setToast} />}
@@ -552,7 +573,7 @@ function LoginView({ onLogin, toast, setToast }) {
   );
 }
 
-function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selectedTaskData, loading, setLoading, onDone, onCelebrate, onReloadTask, setToast }) {
+function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selectedTaskData, loading, setLoading, onDone, onCelebrate, onReloadTask, setToast, onStartFocus }) {
   const [queueCollapsed, setQueueCollapsed] = useState(false);
   const grouped = useMemo(() => {
     const buckets = {
@@ -582,9 +603,13 @@ function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selecte
 
   return (
     <>
-      <DailyBriefing dashboard={dashboard} userName="Luciano" />
+      <DailyBriefing dashboard={dashboard} userName="Luciano" onStartFocus={() => onStartFocus(tasks[0]?.id)} />
       <MetricGridNew dashboard={dashboard} />
-      <NextTaskHero task={tasks[0]} onExecute={() => onSelectTask(tasks[0]?.id)} />
+      <NextTaskHero
+        task={tasks[0]}
+        onExecute={(task) => onStartFocus(task?.id ?? tasks[0]?.id)}
+        onSkip={() => onSelectTask(tasks[1]?.id ?? tasks[0]?.id)}
+      />
 
       <div className="grid gap-4" style={{ gridTemplateColumns: queueCollapsed ? '72px 1fr' : 'minmax(280px,320px) 1fr' }}>
         {/* ── Queue panel ── */}
@@ -2256,6 +2281,460 @@ function SettingsView({ config }) {
         </div>
       </section>
     </>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   MODO FOCO — tela cheia sem distração
+   ───────────────────────────────────────────── */
+
+const FOCUS_CALL_OUTCOMES = ['no_answer', 'callback_requested', 'meeting_scheduled', 'not_interested', 'material_requested'];
+
+const OUTCOMES_NEED_FIELD = {
+  callback_requested: 'followup_at',
+  not_interested:     'reason',
+  out_of_icp:         'reason',
+  lost:               'reason',
+};
+
+const OUTCOMES_CELEBRATE = new Set(['meeting_scheduled', 'meeting_happened', 'interested']);
+
+function useElapsed() {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const m = String(Math.floor(secs / 60)).padStart(2, '0');
+  const s = String(secs % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRefreshShell, setToast }) {
+  const [queue, setQueue] = useState(() => {
+    const sorted = [...initialTasks];
+    const idx = sorted.findIndex((t) => t.id === startTaskId);
+    if (idx > 0) { const [t] = sorted.splice(idx, 1); sorted.unshift(t); }
+    return sorted;
+  });
+  const [cursor, setCursor] = useState(0);
+  const [taskData, setTaskData] = useState(null);
+  const [loadingData, setLoadingData] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [callId, setCallId] = useState('');
+  const [note, setNote] = useState('');
+  const [doneCount, setDoneCount] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
+  /* mini-form state */
+  const [pendingOutcome, setPendingOutcome] = useState(null);
+  const [pendingField, setPendingField] = useState('');
+  const elapsed = useElapsed();
+
+  const currentTask = queue[cursor] ?? null;
+  const task = taskData?.task ?? null;
+  const lead = taskData?.lead ?? null;
+
+  /* Load task detail whenever cursor / queue changes */
+  useEffect(() => {
+    if (!currentTask) { setTaskData(null); return; }
+    setLoadingData(true);
+    setCallId('');
+    setNote('');
+    setPendingOutcome(null);
+    setPendingField('');
+    api(`/api/tasks/${currentTask.id}`)
+      .then(setTaskData)
+      .catch((e) => setToast(e.message))
+      .finally(() => setLoadingData(false));
+  }, [currentTask?.id]);
+
+  /* Advance queue */
+  async function advance() {
+    const next = cursor + 1;
+    if (next < queue.length) { setCursor(next); return; }
+    /* queue exhausted — reload from server */
+    try {
+      const fresh = await api('/api/tasks/today');
+      if (!fresh.length) { setExhausted(true); return; }
+      setQueue(fresh);
+      setCursor(0);
+    } catch (e) {
+      setToast(e.message);
+    }
+  }
+
+  /* Complete task */
+  async function complete(outcome, extraFields = {}) {
+    if (!task) return;
+    setCompleting(true);
+    try {
+      const fields = {
+        ...(lead?.enrichment || {}),
+        ...(task.fields || {}),
+        phone: task.primary_phone || '',
+        conversation_note: note,
+        ...(callId ? { call_id: callId } : {}),
+        ...extraFields,
+      };
+      await api(`/api/tasks/${task.id}/complete`, { method: 'POST', body: { outcome, fields } });
+      if (OUTCOMES_CELEBRATE.has(outcome)) onCelebrate?.();
+      setDoneCount((d) => d + 1);
+      await advance();
+    } catch (e) {
+      setToast(e.message);
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  /* Handle outcome button click */
+  function handleOutcome(outcome) {
+    if (OUTCOMES_NEED_FIELD[outcome]) {
+      setPendingOutcome(outcome);
+      setPendingField('');
+      return;
+    }
+    complete(outcome);
+  }
+
+  /* Confirm mini-form */
+  function confirmPending() {
+    if (!pendingOutcome) return;
+    const fieldKey = OUTCOMES_NEED_FIELD[pendingOutcome];
+    complete(pendingOutcome, { [fieldKey]: pendingField });
+    setPendingOutcome(null);
+  }
+
+  /* Snooze +1h */
+  async function snooze() {
+    if (!task) return;
+    const due_at = new Date(Date.now() + 3600_000).toISOString();
+    try {
+      await api(`/api/tasks/${task.id}/snooze`, { method: 'POST', body: { due_at } });
+      setQueue((q) => q.filter((_, i) => i !== cursor));
+      if (cursor >= queue.length - 1) setCursor(Math.max(0, cursor - 1));
+    } catch (e) {
+      setToast(e.message);
+    }
+  }
+
+  /* Call via 3C+ */
+  async function call3c() {
+    if (!task) return;
+    const phone = task.primary_phone;
+    if (!phone) { setToast('Sem telefone para ligar.'); return; }
+    try {
+      const res = await api('/api/3c/manual-call/start', {
+        method: 'POST',
+        body: { taskId: task.id, leadId: task.lead_id, phone },
+      });
+      setCallId(res.callId || '');
+      setToast('Ligação enviada para a 3C+.');
+    } catch (e) {
+      setToast(`${e.message}. Use o telefone local como fallback.`);
+    }
+  }
+
+  /* Copy phone */
+  async function copyPhone() {
+    const phone = task?.primary_phone;
+    if (!phone) return;
+    try { await navigator.clipboard.writeText(phone); setToast('Telefone copiado.'); }
+    catch { setToast('Não foi possível copiar.'); }
+  }
+
+  /* Keyboard shortcuts */
+  useEffect(() => {
+    function handler(e) {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'Escape') {
+        if (pendingOutcome) { setPendingOutcome(null); return; }
+        onExit?.();
+        return;
+      }
+      if (e.key === 'p' || e.key === 'P' || e.key === 'ArrowRight') { snooze(); return; }
+      if (e.key === 'c' || e.key === 'C') { copyPhone(); return; }
+      if ((e.key === 'l' || e.key === 'L') && task?.type === 'CALL') { call3c(); return; }
+
+      const num = parseInt(e.key, 10);
+      if (!isNaN(num) && num >= 1) {
+        const visible = visibleOutcomes();
+        const item = visible[num - 1];
+        if (item) handleOutcome(item.outcome);
+      }
+    }
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [task, pendingOutcome, queue, cursor]);
+
+  function visibleOutcomes() {
+    if (!task) return [];
+    const all = outcomesFor(task);
+    if (task.type === 'CALL') return all.filter((o) => FOCUS_CALL_OUTCOMES.includes(o.outcome));
+    return all.slice(0, 6);
+  }
+
+  const outcomes = visibleOutcomes();
+  const message = task && lead ? replaceTemplate(task.payload?.messageTemplate, task, lead) : '';
+  const decisor = lead?.contacts?.[0];
+  const pain = lead?.enrichment?.pain_hypothesis || lead?.recentContext?.[0]?.note || '';
+
+  /* ── Exhausted state ── */
+  if (exhausted) {
+    return (
+      <div className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center gap-4 text-center px-6">
+        <div className="text-5xl">🎯</div>
+        <h2 className="text-2xl font-bold">Fila zerada!</h2>
+        <p className="text-muted-foreground">{doneCount} tarefa{doneCount !== 1 ? 's' : ''} concluída{doneCount !== 1 ? 's' : ''} nesta sessão.</p>
+        <button
+          className="mt-4 h-11 px-6 rounded-lg bg-primary text-primary-foreground font-semibold hover:brightness-110 transition"
+          onClick={() => { onRefreshShell?.(); onExit?.(); }}
+        >
+          Voltar ao cockpit
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-background flex flex-col overflow-hidden">
+
+      {/* ── Top bar ── */}
+      <header className="shrink-0 flex items-center justify-between gap-4 px-5 py-3 border-b border-border bg-card/80 backdrop-blur">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+          </span>
+          <span className="font-semibold text-primary">Modo Foco</span>
+          <span className="text-muted-foreground hidden sm:inline">
+            {doneCount} feita{doneCount !== 1 ? 's' : ''} · {queue.length - cursor} na fila
+          </span>
+        </div>
+        <span className="font-mono text-sm text-muted-foreground tabular-nums">{elapsed}</span>
+        <div className="flex items-center gap-2">
+          <span className="hidden md:flex items-center gap-3 text-[11px] text-muted-foreground/60 mr-2">
+            <span><kbd className="font-mono">1–9</kbd> resultado</span>
+            <span><kbd className="font-mono">P</kbd> pular</span>
+            <span><kbd className="font-mono">C</kbd> copiar</span>
+            {task?.type === 'CALL' && <span><kbd className="font-mono">L</kbd> ligar</span>}
+            <span><kbd className="font-mono">Esc</kbd> sair</span>
+          </span>
+          <button
+            className="h-8 px-3 rounded-md border border-border bg-surface text-sm hover:bg-surface-2 transition-colors"
+            onClick={() => { onRefreshShell?.(); onExit?.(); }}
+          >
+            Sair do foco
+          </button>
+        </div>
+      </header>
+
+      {/* ── Progress bar ── */}
+      <div className="shrink-0 h-1 bg-surface-2">
+        <div
+          className="h-full bg-primary transition-all duration-300"
+          style={{ width: `${Math.max(2, (doneCount / (doneCount + queue.length - cursor)) * 100)}%` }}
+        />
+      </div>
+
+      {/* ── Main content ── */}
+      <div className="flex-1 overflow-y-auto">
+        {loadingData || !task ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            <span className="animate-pulse">Carregando tarefa...</span>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto px-4 py-8 flex flex-col gap-6">
+
+            {/* Company + context */}
+            <div className="rounded-2xl border border-border bg-card p-6">
+              <div className="text-[10px] uppercase tracking-widest text-primary font-semibold mb-1">
+                {TYPE_LABEL[task.type]} · {task.title}
+              </div>
+              <h1 className="text-3xl font-bold leading-tight">{companyNameFromTask(task)}</h1>
+              {(lead?.city || lead?.cnpj) && (
+                <p className="text-sm text-muted-foreground mt-1 font-mono">
+                  {[lead.city, lead.cnpj].filter(Boolean).join(' · ')}
+                </p>
+              )}
+
+              {/* Decisor + phone */}
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {decisor && (
+                  <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Decisor</div>
+                    <div className="font-semibold mt-0.5">{decisor.name}</div>
+                    {decisor.role && <div className="text-xs text-muted-foreground">{decisor.role}</div>}
+                  </div>
+                )}
+                {task.primary_phone && (
+                  <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Telefone</div>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <span className="font-mono font-semibold">{task.primary_phone}</span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          className="h-7 px-2 rounded border border-border bg-surface-2 text-xs hover:bg-card transition-colors"
+                          onClick={copyPhone}
+                          title="Copiar (C)"
+                        >
+                          Copiar
+                        </button>
+                        {task.type === 'CALL' && (
+                          <button
+                            className="h-7 px-2 rounded bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition"
+                            onClick={call3c}
+                            title="Ligar pela 3C+ (L)"
+                          >
+                            Ligar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Pain + script */}
+            <div className="rounded-2xl border border-border bg-card p-5 flex flex-col gap-4">
+              {pain && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Hipótese de dor</div>
+                  <p className="text-sm leading-relaxed">{pain}</p>
+                </div>
+              )}
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">Roteiro</div>
+                <p className="text-sm text-muted-foreground leading-relaxed">{scriptFor(task.type, task)}</p>
+              </div>
+              {/* Message template for WA/email */}
+              {['WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(task.type) && message && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] uppercase tracking-wider text-info font-semibold">Mensagem pronta</div>
+                    <button
+                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={async () => {
+                        try { await navigator.clipboard.writeText(message); setToast('Mensagem copiada.'); }
+                        catch { setToast('Não foi possível copiar.'); }
+                      }}
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface p-3 text-sm whitespace-pre-wrap text-muted-foreground leading-relaxed max-h-40 overflow-y-auto">
+                    {message}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Quick note */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">Nota rápida (opcional)</div>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Observação, objeção, combinado..."
+                rows={2}
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-ring transition resize-none"
+              />
+            </div>
+
+            {/* Mini-form for required fields */}
+            {pendingOutcome && (
+              <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-5 flex flex-col gap-3">
+                <div className="text-sm font-semibold">
+                  {pendingOutcome === 'callback_requested' && 'Quando retornar?'}
+                  {(pendingOutcome === 'not_interested' || pendingOutcome === 'out_of_icp' || pendingOutcome === 'lost') && 'Qual o motivo?'}
+                </div>
+                {OUTCOMES_NEED_FIELD[pendingOutcome] === 'followup_at' ? (
+                  <input
+                    type="datetime-local"
+                    value={toLocalInput(pendingField)}
+                    onChange={(e) => setPendingField(fromLocalInput(e.target.value))}
+                    className="rounded-lg border border-border bg-input px-3 py-2 text-sm outline-none focus:border-primary w-full"
+                    autoFocus
+                  />
+                ) : (
+                  <textarea
+                    value={pendingField}
+                    onChange={(e) => setPendingField(e.target.value)}
+                    placeholder="Descreva brevemente..."
+                    rows={2}
+                    className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm outline-none focus:border-primary resize-none"
+                    autoFocus
+                  />
+                )}
+                <div className="flex gap-2">
+                  <button
+                    className="flex-1 h-10 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:brightness-110 transition disabled:opacity-50"
+                    disabled={!pendingField}
+                    onClick={confirmPending}
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    className="h-10 px-4 rounded-lg border border-border bg-surface text-sm hover:bg-surface-2 transition"
+                    onClick={() => setPendingOutcome(null)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Outcome buttons */}
+            {!pendingOutcome && (
+              <div className="flex flex-col gap-2 pb-4">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Resultado</div>
+                {outcomes.map((item, idx) => {
+                  const isPrimary = item.kind === 'primary';
+                  const isSuccess = isPrimary;
+                  return (
+                    <button
+                      key={item.outcome}
+                      disabled={completing}
+                      onClick={() => handleOutcome(item.outcome)}
+                      className={`group relative flex items-center gap-3 w-full h-12 px-4 rounded-xl border text-sm font-semibold transition-all disabled:opacity-50
+                        ${isSuccess
+                          ? 'border-success/40 bg-success/10 text-success hover:bg-success/20'
+                          : 'border-border bg-surface text-foreground hover:bg-surface-2'
+                        }`}
+                    >
+                      <span className="flex items-center justify-center h-5 w-5 rounded border border-current/20 text-[10px] font-mono opacity-60">
+                        {idx + 1}
+                      </span>
+                      {item.label}
+                      {OUTCOMES_NEED_FIELD[item.outcome] && (
+                        <span className="ml-auto text-[10px] text-muted-foreground opacity-60">requer campo →</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Snooze */}
+            {!pendingOutcome && (
+              <div className="flex items-center justify-center pb-8">
+                <button
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                  onClick={snooze}
+                >
+                  <span>Agora não · +1h</span>
+                  <span className="text-[10px] font-mono opacity-50">(P)</span>
+                </button>
+              </div>
+            )}
+
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

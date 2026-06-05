@@ -21,7 +21,7 @@ function getGreeting(h) {
   return 'Boa noite';
 }
 
-export function DailyBriefing({ dashboard, userName }) {
+export function DailyBriefing({ dashboard, userName, onStartFocus }) {
   const now  = new Date();
   const hour = now.getHours();
   const min  = now.getMinutes();
@@ -77,10 +77,16 @@ export function DailyBriefing({ dashboard, userName }) {
           <p className="mt-3 text-muted-foreground text-sm max-w-sm">{phrase}</p>
 
           <div className="mt-5 flex items-center gap-3 flex-wrap">
-            <button className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary text-primary-foreground font-semibold text-sm glow-primary hover:brightness-110 transition">
+            <button
+              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary text-primary-foreground font-semibold text-sm glow-primary hover:brightness-110 transition"
+              onClick={onStartFocus}
+            >
               <PlayCircle size={16} /> Iniciar execução
             </button>
-            <button className="flex items-center gap-2 h-10 px-4 rounded-lg border border-border bg-surface text-sm hover:bg-surface-2 transition">
+            <button
+              className="flex items-center gap-2 h-10 px-4 rounded-lg border border-border bg-surface text-sm hover:bg-surface-2 transition"
+              onClick={onStartFocus}
+            >
               <Zap size={14} /> Power hour
             </button>
             {meetingDelta && (
