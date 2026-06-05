@@ -196,6 +196,8 @@ function App() {
   const [celebrating, setCelebrating] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [focusStartTaskId, setFocusStartTaskId] = useState(null);
+  const [focusFilterTypes, setFocusFilterTypes] = useState([]);
+  const [focusBlockLabel, setFocusBlockLabel] = useState('');
 
   async function loadShell({ respectUrlTask = true } = {}) {
     const [bootstrap, bdr, funnels, closer, today] = await Promise.all([
@@ -321,8 +323,10 @@ function App() {
     setToast(message);
   }
 
-  function startFocus(taskId) {
+  function startFocus(taskId, filterTypes = [], blockLabel = '') {
     setFocusStartTaskId(taskId ?? tasks[0]?.id ?? null);
+    setFocusFilterTypes(filterTypes ?? []);
+    setFocusBlockLabel(blockLabel ?? '');
     setFocusMode(true);
   }
 
@@ -350,6 +354,8 @@ function App() {
         <FocusMode
           tasks={tasks}
           startTaskId={focusStartTaskId}
+          filterTypes={focusFilterTypes}
+          blockLabel={focusBlockLabel}
           onExit={() => setFocusMode(false)}
           onCelebrate={() => setCelebrating(true)}
           onRefreshShell={() => loadShell({ respectUrlTask: false }).catch((e) => setToast(e.message))}
@@ -603,11 +609,12 @@ function ExecutionView({ dashboard, tasks, selectedTaskId, onSelectTask, selecte
 
   return (
     <>
-      <DailyBriefing dashboard={dashboard} userName="Luciano" onStartFocus={() => onStartFocus(tasks[0]?.id)} />
+      <DayPlan tasks={tasks} onStartFocus={onStartFocus} />
+      <DailyBriefing dashboard={dashboard} userName="Luciano" onStartFocus={() => onStartFocus(tasks[0]?.id, [], '')} />
       <MetricGridNew dashboard={dashboard} />
       <NextTaskHero
         task={tasks[0]}
-        onExecute={(task) => onStartFocus(task?.id ?? tasks[0]?.id)}
+        onExecute={(t) => onStartFocus(t?.id ?? tasks[0]?.id, [], '')}
         onSkip={() => onSelectTask(tasks[1]?.id ?? tasks[0]?.id)}
       />
 
@@ -2288,6 +2295,127 @@ function SettingsView({ config }) {
    MODO FOCO — tela cheia sem distração
    ───────────────────────────────────────────── */
 
+/* ─────────────────────────────────────────────
+   PLANO DO DIA — time-boxing por blocos
+   ───────────────────────────────────────────── */
+
+const DAY_BLOCKS = [
+  { start: '08:00', end: '09:00', label: 'Confirmar reuniões + follow WhatsApp', types: ['MEETING_CONFIRMATION', 'WHATSAPP'] },
+  { start: '09:00', end: '11:30', label: 'Ligação na discadora 3C+',            types: ['CALL'] },
+  { start: '11:30', end: '12:00', label: 'Follow de ligação',                   types: ['FOLLOW_UP', 'CALL'] },
+  { start: '12:00', end: '13:00', label: 'Almoço',                              types: [], pause: true },
+  { start: '13:00', end: '14:00', label: 'Follow WhatsApp + e-mail',            types: ['WHATSAPP', 'EMAIL'] },
+  { start: '14:00', end: '17:00', label: 'Ligação na discadora 3C+',            types: ['CALL'] },
+  { start: '17:00', end: '17:30', label: 'Follow de ligação',                   types: ['FOLLOW_UP', 'CALL'] },
+  { start: '17:30', end: '18:00', label: 'Reuniões',                            types: ['MEETING_CONFIRMATION'] },
+];
+
+const BLOCK_TYPE_ICONS = {
+  CALL: '📞', WHATSAPP: '💬', EMAIL: '✉️',
+  FOLLOW_UP: '🔁', MEETING_CONFIRMATION: '📅',
+  ENRICHMENT: '🔍', LINKEDIN: '🔗', CLOSER_FOLLOW_UP: '🤝',
+};
+
+function toMinutes(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function useCurrentBlock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const idx = DAY_BLOCKS.findIndex((b) => mins >= toMinutes(b.start) && mins < toMinutes(b.end));
+  const block = idx >= 0 ? DAY_BLOCKS[idx] : null;
+  const minsLeft = block ? toMinutes(block.end) - mins : 0;
+  const blockMins = block ? toMinutes(block.end) - toMinutes(block.start) : 1;
+  const elapsed = block ? mins - toMinutes(block.start) : 0;
+  const pct = block ? Math.min(100, Math.round((elapsed / blockMins) * 100)) : 0;
+  return { activeIdx: idx, block, minsLeft, pct, mins };
+}
+
+function DayPlan({ tasks, onStartFocus }) {
+  const { activeIdx, block: activeBlock, minsLeft, pct } = useCurrentBlock();
+
+  return (
+    <div className="rounded-2xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+        <div className="font-semibold text-sm">Plano do dia</div>
+        {activeIdx < 0 && (
+          <button
+            className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition"
+            onClick={() => onStartFocus(tasks[0]?.id, [], '')}
+          >
+            Focar em tudo
+          </button>
+        )}
+        {activeIdx < 0 && (
+          <span className="text-xs text-muted-foreground ml-2">Fora do plano do dia</span>
+        )}
+      </div>
+
+      <div className="divide-y divide-border">
+        {DAY_BLOCKS.map((b, idx) => {
+          const isActive = idx === activeIdx;
+          const isPast = activeIdx >= 0 ? idx < activeIdx : toMinutes(b.end) < (new Date().getHours() * 60 + new Date().getMinutes());
+          const typeIcons = [...new Set(b.types)].map((t) => BLOCK_TYPE_ICONS[t] || '').filter(Boolean);
+
+          return (
+            <div
+              key={b.start}
+              className={`flex items-center gap-3 px-5 py-3 transition-colors ${
+                isActive ? 'bg-primary/8' : isPast ? 'opacity-40' : ''
+              }`}
+            >
+              {/* time */}
+              <div className="w-20 shrink-0 text-xs font-mono text-muted-foreground">
+                {b.start}–{b.end}
+              </div>
+
+              {/* label + progress */}
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm font-medium truncate ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  {typeIcons.join(' ')} {b.label}
+                </div>
+                {isActive && !b.pause && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="flex-1 h-1 rounded-full bg-surface-2 overflow-hidden">
+                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                      faltam {minsLeft} min
+                    </span>
+                  </div>
+                )}
+                {isActive && b.pause && (
+                  <div className="text-xs text-muted-foreground mt-0.5">faltam {minsLeft} min</div>
+                )}
+              </div>
+
+              {/* focus button */}
+              {isActive && !b.pause && (
+                <button
+                  className="shrink-0 h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition"
+                  onClick={() => onStartFocus(tasks.find((t) => b.types.includes(t.type))?.id, b.types, b.label)}
+                >
+                  Focar neste bloco
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   MODO FOCO — tela cheia sem distração
+   ───────────────────────────────────────────── */
+
 const FOCUS_CALL_OUTCOMES = ['no_answer', 'callback_requested', 'meeting_scheduled', 'not_interested', 'material_requested'];
 
 const OUTCOMES_NEED_FIELD = {
@@ -2310,9 +2438,10 @@ function useElapsed() {
   return `${m}:${s}`;
 }
 
-function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRefreshShell, setToast }) {
+function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRefreshShell, setToast, filterTypes, blockLabel }) {
   const [queue, setQueue] = useState(() => {
-    const sorted = [...initialTasks];
+    let sorted = [...initialTasks];
+    if (filterTypes?.length) sorted = sorted.filter((t) => filterTypes.includes(t.type));
     const idx = sorted.findIndex((t) => t.id === startTaskId);
     if (idx > 0) { const [t] = sorted.splice(idx, 1); sorted.unshift(t); }
     return sorted;
@@ -2354,13 +2483,20 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
     if (next < queue.length) { setCursor(next); return; }
     /* queue exhausted — reload from server */
     try {
-      const fresh = await api('/api/tasks/today');
+      let fresh = await api('/api/tasks/today');
+      if (filterTypes?.length) fresh = fresh.filter((t) => filterTypes.includes(t.type));
       if (!fresh.length) { setExhausted(true); return; }
       setQueue(fresh);
       setCursor(0);
     } catch (e) {
       setToast(e.message);
     }
+  }
+
+  /* Skip — rotate cursor, no API call */
+  function skip() {
+    if (queue.length <= 1) { setToast('Só resta esta tarefa.'); return; }
+    setCursor((c) => (c + 1) % queue.length);
   }
 
   /* Complete task */
@@ -2411,8 +2547,10 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
     const due_at = new Date(Date.now() + 3600_000).toISOString();
     try {
       await api(`/api/tasks/${task.id}/snooze`, { method: 'POST', body: { due_at } });
-      setQueue((q) => q.filter((_, i) => i !== cursor));
-      if (cursor >= queue.length - 1) setCursor(Math.max(0, cursor - 1));
+      const next = queue.filter((_, i) => i !== cursor);
+      if (!next.length) { setExhausted(true); return; }
+      setQueue(next);
+      setCursor((c) => Math.min(c, next.length - 1));
     } catch (e) {
       setToast(e.message);
     }
@@ -2454,7 +2592,8 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
         onExit?.();
         return;
       }
-      if (e.key === 'p' || e.key === 'P' || e.key === 'ArrowRight') { snooze(); return; }
+      if (e.key === 'p' || e.key === 'P' || e.key === 'ArrowRight') { skip(); return; }
+      if (e.key === 's' || e.key === 'S') { snooze(); return; }
       if (e.key === 'c' || e.key === 'C') { copyPhone(); return; }
       if ((e.key === 'l' || e.key === 'L') && task?.type === 'CALL') { call3c(); return; }
 
@@ -2509,6 +2648,9 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
             <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
           </span>
           <span className="font-semibold text-primary">Modo Foco</span>
+          {blockLabel && (
+            <span className="hidden sm:inline text-xs rounded-full border border-primary/30 bg-primary/10 text-primary px-2 py-0.5">{blockLabel}</span>
+          )}
           <span className="text-muted-foreground hidden sm:inline">
             {doneCount} feita{doneCount !== 1 ? 's' : ''} · {queue.length - cursor} na fila
           </span>
@@ -2518,6 +2660,7 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
           <span className="hidden md:flex items-center gap-3 text-[11px] text-muted-foreground/60 mr-2">
             <span><kbd className="font-mono">1–9</kbd> resultado</span>
             <span><kbd className="font-mono">P</kbd> pular</span>
+            <span><kbd className="font-mono">S</kbd> adiar +1h</span>
             <span><kbd className="font-mono">C</kbd> copiar</span>
             {task?.type === 'CALL' && <span><kbd className="font-mono">L</kbd> ligar</span>}
             <span><kbd className="font-mono">Esc</kbd> sair</span>
@@ -2613,17 +2756,45 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
               {/* Message template for WA/email */}
               {['WHATSAPP', 'EMAIL', 'LINKEDIN'].includes(task.type) && message && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
                     <div className="text-[10px] uppercase tracking-wider text-info font-semibold">Mensagem pronta</div>
-                    <button
-                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={async () => {
-                        try { await navigator.clipboard.writeText(message); setToast('Mensagem copiada.'); }
-                        catch { setToast('Não foi possível copiar.'); }
-                      }}
-                    >
-                      Copiar
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {task.type === 'WHATSAPP' && task.primary_phone && (() => {
+                        const raw = String(task.primary_phone).replace(/\D/g, '');
+                        const wa = raw.startsWith('55') ? raw : `55${raw}`;
+                        const url = `https://wa.me/${wa}?text=${encodeURIComponent(message)}`;
+                        return (
+                          <button
+                            className="h-6 px-2 rounded bg-success/15 border border-success/30 text-success text-[10px] font-semibold hover:bg-success/25 transition"
+                            onClick={() => window.open(url, '_blank')}
+                          >
+                            Abrir WhatsApp
+                          </button>
+                        );
+                      })()}
+                      {task.type === 'EMAIL' && (() => {
+                        const email = decisor?.email || lead?.contacts?.[0]?.email || '';
+                        const subject = replaceTemplate(task.payload?.subjectTemplate, task, lead) || 'Contato Cloud Marketing';
+                        const url = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+                        return (
+                          <button
+                            className="h-6 px-2 rounded bg-info/15 border border-info/30 text-info text-[10px] font-semibold hover:bg-info/25 transition"
+                            onClick={() => window.open(url, '_blank')}
+                          >
+                            Abrir e-mail
+                          </button>
+                        );
+                      })()}
+                      <button
+                        className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={async () => {
+                          try { await navigator.clipboard.writeText(message); setToast('Mensagem copiada.'); }
+                          catch { setToast('Não foi possível copiar.'); }
+                        }}
+                      >
+                        Copiar
+                      </button>
+                    </div>
                   </div>
                   <div className="rounded-lg border border-border bg-surface p-3 text-sm whitespace-pre-wrap text-muted-foreground leading-relaxed max-h-40 overflow-y-auto">
                     {message}
@@ -2726,7 +2897,7 @@ function FocusMode({ tasks: initialTasks, startTaskId, onExit, onCelebrate, onRe
                   onClick={snooze}
                 >
                   <span>Agora não · +1h</span>
-                  <span className="text-[10px] font-mono opacity-50">(P)</span>
+                  <span className="text-[10px] font-mono opacity-50">(S)</span>
                 </button>
               </div>
             )}
